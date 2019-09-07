@@ -1,3 +1,4 @@
+--{-# LANGUAGE OverloadedStrings #-}
 module Main where
 
 import Network.Socket
@@ -10,8 +11,11 @@ import System.IO
 import Graphics.UI.Gtk hiding (Action, backspace, Socket)
 import System.Environment
 
-createButtonWindow :: Window -> Socket -> String -> String -> IO (Window)
-createButtonWindow startWindow sock username info = do
+-- availableWallets :: [String]
+-- availableWallets = ["dollar", "euro", "ruble", "bitcoin"]
+
+createButtonWindow :: Socket -> Handle -> Window -> String -> String -> IO (Window)
+createButtonWindow sock hdl startWindow username info = do
   window <- windowNew
   window `on` deleteEvent $ do
     liftIO $ widgetShowAll startWindow
@@ -30,8 +34,8 @@ createButtonWindow startWindow sock username info = do
   return window
 
 
-createLoginWindow ::  Window -> Socket -> Handle -> String -> String ->IO (Window)
-createLoginWindow  startWindow sock hdl username info = do
+createLoginWindow :: Socket -> Handle -> Window -> String -> String ->IO (Window)
+createLoginWindow  sock hdl startWindow username info = do
   window <- windowNew
   set window [ windowTitle         := "WebDollas"
              , windowDefaultWidth  := 300
@@ -42,36 +46,55 @@ createLoginWindow  startWindow sock hdl username info = do
 
   -- @TODO check how to make option menu, decide whether open a new window or switch insets 
 
-  -- vbAll <- vBoxNew False 5
-  -- containerAdd window vbAll
-  -- vbTop <- vBoxNew False 0
-  -- vbBottom <- vBoxNew False 0
-  -- vbBottomAlt <- vBoxNew False 0
-  -- wallType <- optionMenuNew
-  -- menuShellAppend  
+  vbAll <- vBoxNew False 5
+  containerAdd window vbAll
+  vbTop <- vBoxNew False 0
+  vbBottom <- vBoxNew False 0
+  vbBottomAlt <- vBoxNew False 0
+  wallType <- comboBoxNewText
+  sequence $ map (comboBoxAppendText wallType) ["dollar", "euro", "ruble", "bitcoin"]
 
-  -- boxPackStart vbAll vbTop PackGrow 0
-  -- boxPackStart vbAll vbBottom PackGrow 0
-  -- boxPackStart vbAll vbBottomAlt PackGrow 0
+  boxPackStart vbAll vbTop PackGrow 0
+  boxPackStart vbAll vbBottom PackGrow 0
+  boxPackStart vbAll vbBottomAlt PackGrow 0
+  boxPackStart vbBottomAlt wallType PackGrow 0
 
-  -- widgetHideAll vbBottomAlt
+  btnCreate <- buttonNewWithLabel "create"
+  btnCreate `on` buttonActivated $ do
+    selectedVal <- comboBoxGetActiveText wallType
+    case selectedVal of
+      Nothing -> do
+        dialogW <- messageDialogNew (Just window) [DialogDestroyWithParent] MessageWarning ButtonsNone "Please choose wallet type"  
+        widgetShow dialogW
+      Just x -> do
+        hPutStrLn hdl $ "createWallet " ++ (show x)
+        info <- hGetLine hdl
+        when (info == "success") $ do
+          btnToAdd <- createButtonFromWallet sock hdl window username ("0|" ++ (show x))
+          boxPackStart vbBottom btnToAdd PackGrow 0
+    widgetHideAll vbBottomAlt
+    widgetShowAll vbBottom
+
+  boxPackStart vbBottomAlt btnCreate PackGrow 0
+  widgetHideAll vbBottomAlt
   
-  -- btn <- buttonNewWithLabel "create new wallet"
-  -- btn `on` buttonActivated $ do
-  --   liftIO $ widgetHideAll vbBottom
-  --   liftIO $ 
-  -- (sequence $ map (createButtonFromWallet window sock username) (tail $ words info)) >>=
-  --  (\list -> pure $ map (\b -> boxPackStart vbBottom b PackGrow 0) list)
+  btn <- buttonNewWithLabel "create new wallet"
+  btn `on` buttonActivated $ do
+    liftIO $ widgetHideAll vbBottom
+    liftIO $ widgetShowAll vbBottomAlt 
+  (sequence $ map (createButtonFromWallet sock hdl window username) (tail $ words info)) >>=
+   (\list -> pure $ map (\b -> boxPackStart vbBottom b PackGrow 0) list)
+
 
   return window
   
   where
-    createButtonFromWallet :: Window -> Socket -> String -> String ->  IO (Button)
-    createButtonFromWallet startWindow sock username info = do
+    createButtonFromWallet :: Socket -> Handle -> Window -> String -> String ->  IO (Button)
+    createButtonFromWallet sock hdl startWindow username info = do
       btn <- buttonNewWithLabel info
       btn `on` buttonActivated $ do
         widgetHideAll startWindow
-        window <- createButtonWindow startWindow sock username info
+        window <- createButtonWindow sock hdl startWindow username info
         widgetShowAll window
       return btn
 
@@ -178,7 +201,7 @@ createStartWindow sock hdl = do
     array <- sequence $ map (entryGetText) [entName, entPsw]
     hPutStrLn hdl $ "login " ++ (foldl (\x y -> x ++ " " ++ y) "" array)
     info <- hGetLine hdl 
-    loginWindow <- createLoginWindow window sock hdl (head array) info
+    loginWindow <- createLoginWindow sock hdl window (head array) info
     widgetShowAll loginWindow
     liftIO $ widgetHideAll window
     liftIO $ widgetShowAll loginWindow

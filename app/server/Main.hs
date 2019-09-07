@@ -12,13 +12,14 @@ import Lib (
   , transferWallet
   )
 
-data SqlAction = Login String String | Register String String String | Transmit String String String String | Change String String String String deriving (Show)
+data SqlAction = Login String String | Register String String String | Transmit String String String String | Change String String String String | CrWallet String String String deriving (Show)
 
 toSqlAction :: [String] -> SqlAction
 toSqlAction list =
   let comm = head list in case comm of
     "login" -> Login (list !! 1) (list !! 2)
     "register" -> Register (list !! 1) (list !! 2) (list !! 3)
+    "createWallet" -> CrWallet (list !! 1) (list !! 2) "0"
     "transmit" -> Transmit (list !! 1) (list !! 2) (list !! 3) (list !! 4)
     "change" -> Change (list !! 1) (list !! 2) (list !! 3) (list !! 4) 
 
@@ -44,11 +45,14 @@ performAction hdl (Transmit from to walletType toTransfer) = do
 performAction hdl (Change username from to toTransfer) = do
   transferred <- transferWallet username from to (read toTransfer)
   evalActionInfo hdl transferred
+performAction hdl (CrWallet username walletType amount) = do
+  added <- addWallet username walletType (read amount) 
+  evalActionInfo hdl added
 
 mainLoop :: Socket -> IO ()
 mainLoop sock = do
   conn <- accept sock
-  forkIO (runConn conn )
+  forkIO (runConn conn)
   mainLoop sock
 
 runConn :: (Socket, SockAddr) -> IO ()
