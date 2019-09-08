@@ -12,7 +12,7 @@ import Lib (
   , transferWallet
   )
 
-data SqlAction = Login String String | Register String String String | Transmit String String String String | Change String String String String | CrWallet String String String deriving (Show)
+data SqlAction = Login String String | Register String String String | Transfer String String String String | Change String String String String | CrWallet String String String deriving (Show)
 
 toSqlAction :: [String] -> SqlAction
 toSqlAction list =
@@ -20,7 +20,7 @@ toSqlAction list =
     "login" -> Login (list !! 1) (list !! 2)
     "register" -> Register (list !! 1) (list !! 2) (list !! 3)
     "createWallet" -> CrWallet (list !! 1) (list !! 2) "0"
-    "transmit" -> Transmit (list !! 1) (list !! 2) (list !! 3) (list !! 4)
+    "transfer" -> Transfer (list !! 1) (list !! 2) (list !! 3) (list !! 4)
     "change" -> Change (list !! 1) (list !! 2) (list !! 3) (list !! 4) 
 
 evalActionInfo :: Handle -> Maybe String -> IO (Bool)
@@ -28,6 +28,7 @@ evalActionInfo hdl Nothing = do
   hPutStrLn hdl "failure"
   return $ False
 evalActionInfo hdl (Just output) = do
+  -- putStrLn output
   hPutStrLn hdl output
   return $ True
 
@@ -39,7 +40,7 @@ performAction hdl login@(Login username password) = do
 performAction hdl (Register username password mail) = do
   added <- addUser username password mail
   return $ maybe False (\x -> True) added
-performAction hdl (Transmit from to walletType toTransfer) = do
+performAction hdl (Transfer from to walletType toTransfer) = do
   transferred <- transferMoney from to walletType (read toTransfer)
   evalActionInfo hdl transferred
 performAction hdl (Change username from to toTransfer) = do
