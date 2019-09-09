@@ -1,0 +1,83 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.31.1.
+--
+-- see: https://github.com/sol/hpack
+--
+-- hash: 954503a9a1a239da2013ae59593f62642b00917a17e4e04c5adf689a679b6da0
+
+name:           myWallet
+version:        0.1.0.0
+description:    Please see the README on GitHub at <https://github.com/Top1Miami/myWallet#readme>
+homepage:       https://github.com/Top1Miami/myWallet#readme
+bug-reports:    https://github.com/Top1Miami/myWallet/issues
+author:         Dmitrii
+maintainer:     mindraining@gmail.com
+copyright:      2019 Dmitrii
+license:        BSD3
+license-file:   LICENSE
+build-type:     Simple
+extra-source-files:
+    README.md
+    ChangeLog.md
+
+source-repository head
+  type: git
+  location: https://github.com/Top1Miami/myWallet
+
+library
+  exposed-modules:
+      Lib
+  other-modules:
+      Paths_myWallet
+  hs-source-dirs:
+      src
+  build-depends:
+      base >=4.7 && <5
+    , sqlite-simple
+    , time
+  default-language: Haskell2010
+
+
+executable w-server-exe
+  main-is: Main.hs
+  other-modules:
+      Paths_myWallet
+  hs-source-dirs:
+      app\server
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      base >=4.7 && <5
+    , myWallet
+    , network >= 3.0
+  default-language: Haskell2010
+
+executable w-client-exe
+  main-is: Main.hs
+  other-modules:
+      Paths_myWallet
+  hs-source-dirs:
+      app\client
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      base >=4.7 && <5
+    , myWallet
+    , data-default-class
+    , gtk
+    , text == 1.2.3.1
+    , strings >= 1.0
+    , network >= 3.0
+  default-language: Haskell2010
+
+test-suite myWallet-test
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      Paths_myWallet
+  hs-source-dirs:
+      test
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      base >=4.7 && <5
+    , myWallet
+  default-language: Haskell2010
