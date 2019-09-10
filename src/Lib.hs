@@ -113,7 +113,7 @@ selectWallet conn user walletType = do
 
 selectWalletById :: Connection -> Int -> IO (Maybe Wallet)
 selectWalletById conn walletId = do
-  response <- query conn "SELECT * FROM wallets WHERE walletId = ?" (Only walletId)
+  response <- query conn "SELECT * FROM wallets WHERE id = ?" (Only walletId)
   return $ foundAny response
 
 foundAll :: [a] -> Maybe [a]

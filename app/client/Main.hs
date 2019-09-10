@@ -6,6 +6,7 @@ import Control.Monad
 import Control.Concurrent
 import Control.Monad.IO.Class
 import Data.IORef
+import Data.Typeable
 import Data.Strings
 import Data.Text hiding (head, tail, map, foldl, words, init, tail)
 import System.IO
@@ -28,61 +29,90 @@ getFormatedWindow startWindow = do
   containerAdd window vbAll
   return (window, vbAll)
 
-createTransferWindow :: Socket -> Handle -> Window -> String -> String -> IO (Window)
-createTransferWindow sock hdl startWindow username info =
+createTransferWindow :: Handle -> Window -> String -> String -> IO (Window)
+createTransferWindow hdl startWindow username info = do
   (window, vbAll) <- getFormatedWindow startWindow
+  
   entName <- entryNew
   set entName [ entryText := "" ]
   entAmount <- entryNew
   set entAmount [ entryText := "" ]
   btnTransfer <- buttonNewWithLabel "transfer"
+  boxPackStart vbAll entName PackGrow 0
+  boxPackStart vbAll entAmount PackGrow 0
+  boxPackStart vbAll btnTransfer PackGrow 0
   btnTransfer `on` buttonActivated $ do
-    array <- sequence $ map (entryGetText) [entName, entAmount] 
-    let (amount, wallType) = (strSplit info)
-    let entAmountStr = entryGetText entAmount
-    if((read amount) > (read entAmountStr))
+    let (amount, wallType) = (strSplit "|" info)
+    entAmountStr <- entryGetText entAmount
+    entNameStr <- entryGetText entName
+    -- putStrLn $ entAmountStr ++ " " ++ amount
+    if((read amount::Int) > (read entAmountStr::Int))
       then do
-        hPutStrLn hdl $! "transfer" ++ username ++ (entryGetText entName) ++ info ++ entAmountStr
+        putStrLn $! "transfer " ++ username ++ " " ++ entNameStr ++ " " ++ wallType ++ " " ++ entAmountStr
+        hPutStrLn hdl $! "transfer " ++ username ++ " " ++ entNameStr ++ " " ++ wallType ++ " " ++ entAmountStr
+        output <- hGetLine hdl
+        putStrLn output
         widgetHideAll window
         widgetShowAll startWindow
       else do
         dialogW <- messageDialogNew (Just window) [DialogDestroyWithParent] MessageWarning ButtonsNone "Not enough money on account"  
-        widgetShow dialogW 
+        widgetShow dialogW
+  return window
 
-createTransferInsideWindow :: Socket -> Handle -> Window -> String -> String -> IO (Window)
-createTransferInsideWindow sock hdl startWindow username info = do
+createTransferInsideWindow :: Handle -> Window -> String -> String -> IO (Window)
+createTransferInsideWindow hdl startWindow username info = do
   (window, vbAll) <- getFormatedWindow startWindow
-  
-          
-  
+
+  wallType <- comboBoxNewText
+  sequence $ map (comboBoxAppendText wallType . pack) ["dollar", "euro", "ruble", "bitcoin"]
+  entAmount <- entryNew
+  set entAmount [ entryText := "" ]
+  btnTransfer <- buttonNewWithLabel "transfer" 
+  boxPackStart vbAll wallType PackGrow 0
+  boxPackStart vbAll entAmount PackGrow 0
+  boxPackStart vbAll btnTransfer PackGrow 0
+  btnTransfer `on` buttonActivated $ do
+    selectedVal <- comboBoxGetActiveText wallType
+    case selectedVal of
+      Nothing -> do
+        dialogW <- messageDialogNew (Just window) [DialogDestroyWithParent] MessageWarning ButtonsNone "Please choose wallet type"  
+        widgetShow dialogW
+      Just wall -> do
+        let (amount, wallType) = (strSplit "|" info)
+        entAmountStr <- entryGetText entAmount
+        if((read amount::Int) > (read entAmountStr::Int))
+          then do
+            hPutStrLn hdl $ "change " ++ username ++ " " ++ wallType ++ " " ++ (show wall) ++ " " ++ entAmountStr
+            output <- hGetLine hdl
+            putStrLn output
+            widgetHideAll window
+            widgetShowAll startWindow
+          else do
+            dialogW <- messageDialogNew (Just window) [DialogDestroyWithParent] MessageWarning ButtonsNone "Not enough money on account"  
+            widgetShow dialogW
+  return window
 
 
-createButtonWindow :: Socket -> Handle -> Window -> String -> String -> IO (Window)
-createButtonWindow sock hdl startWindow username info = do
-  window <- windowNew
-  window `on` deleteEvent $ do
-    liftIO $ widgetShowAll startWindow
-    return False
-  set window [ windowTitle         := "WebDollas"
-             , windowDefaultWidth  := 300
-             , windowDefaultHeight := 300 ]
-  vbAll <- vBoxNew False 5 
-  containerAdd window vbAll
+
+createButtonWindow :: Handle -> Window -> String -> String -> IO (Window)
+createButtonWindow hdl startWindow username info = do
+  (window, vbAll) <- getFormatedWindow startWindow
+
   labelInfo <- labelNewWithMnemonic $ username ++ " has " ++ info
-  btnTransmit <- buttonNewWithLabel "transfer to other person"
-  btnTransmit `on` buttonActivated $ do
-    transferWindow <- createTransferWindow sock hdl window username info
+  btnTransfer <- buttonNewWithLabel "transfer to other person"
+  btnTransfer `on` buttonActivated $ do
+    transferWindow <- createTransferWindow hdl window username info
     widgetHideAll window
     widgetShowAll transferWindow
   btnChange <- buttonNewWithLabel "to your wallet"
   boxPackStart vbAll labelInfo PackGrow 0
-  boxPackStart vbAll btnTransmit PackGrow 0
+  boxPackStart vbAll btnTransfer PackGrow 0
   boxPackStart vbAll btnChange PackGrow 0
   return window
 
 
-createLoginWindow :: Socket -> Handle -> Window -> String -> String ->IO (Window)
-createLoginWindow  sock hdl startWindow username info = do
+createLoginWindow :: Handle -> Window -> String -> String ->IO (Window)
+createLoginWindow  hdl startWindow username info = do
   window <- windowNew
   set window [ windowTitle         := "WebDollas"
              , windowDefaultWidth  := 300
@@ -113,10 +143,10 @@ createLoginWindow  sock hdl startWindow username info = do
         info <- hGetLine hdl
         when (info == "success") $ do
           putStrLn "added"
-          btnToAdd <- createButtonFromWallet vbWallets sock hdl window username ("0|" ++ (show x))
+          btnToAdd <- createButtonFromWallet vbWallets hdl window username ("0|" ++ (tail $ init (show x)))
           boxPackStart vbWallets btnToAdd PackGrow 0
           widgetShow btnToAdd
-  res <- sequence $ map (createButtonFromWallet vbWallets sock hdl window username) (words info)
+  res <- sequence $ map (createButtonFromWallet vbWallets hdl window username) (words info)
   
   widgetShowAll vbWallets
   boxPackStart vbAddWallet wallType PackGrow 0
@@ -126,39 +156,28 @@ createLoginWindow  sock hdl startWindow username info = do
   return window
   
   where
-    createButtonFromWallet :: VBox -> Socket -> Handle -> Window -> String -> String ->  IO (Button)
-    createButtonFromWallet vbox sock hdl startWindow username info = do
+    createButtonFromWallet :: VBox -> Handle -> Window -> String -> String ->  IO (Button)
+    createButtonFromWallet vbox hdl startWindow username info = do
       btn <- buttonNewWithLabel info
-      let (amount, wallType) = strSplit info
+      let (amount, wallType) = (strSplit "|" info)
       putStrLn $ "buttonCreated " ++ info
       boxPackStart vbox btn PackGrow 0
       btn `on` buttonActivated $ do
-        if (amount /= 0) 
+        if ((read amount) /= 0) 
           then do  
+            window <- createButtonWindow hdl startWindow username info
             widgetHideAll startWindow
-            window <- createButtonWindow sock hdl startWindow username info
             widgetShowAll window
           else do
-            dialogW <- messageDialogNew (Just window) [DialogDestroyWithParent] MessageWarning ButtonsNone "There is no operation availabele with no resources on account"  
+            dialogW <- messageDialogNew (Just startWindow) [DialogDestroyWithParent] MessageWarning ButtonsNone "There is no operation availabele with no resources on account"  
             widgetShow dialogW
-
-
-
       return btn
 
 
 
-createRegisterWindow :: Socket -> Handle -> Window -> IO (Window)
-createRegisterWindow sock hdl startWindow = do
-  window <- windowNew
-  set window [ windowTitle         := "WebDollas"
-             , windowDefaultWidth  := 300
-             , windowDefaultHeight := 300 ]
-  window `on` deleteEvent $ do
-    liftIO $ widgetShowAll startWindow
-    return False
-  vbAll <- vBoxNew False 5 
-  containerAdd window vbAll
+createRegisterWindow :: Handle -> Window -> IO (Window)
+createRegisterWindow hdl startWindow = do
+  (window, vbAll) <- getFormatedWindow startWindow
   
   hbName <- hBoxNew False 5
   labelName <- labelNewWithMnemonic "username"
@@ -214,16 +233,16 @@ createRegisterWindow sock hdl startWindow = do
   return window
 
 
-createStartWindow :: Socket -> Handle -> IO (Window)
-createStartWindow sock hdl = do 
+createStartWindow :: Handle -> IO (Window)
+createStartWindow hdl = do 
   window <- windowNew
-  set window [ windowTitle         := "WebDollas"
-             , windowDefaultWidth  := 300
-             , windowDefaultHeight := 300 ]
   window `on` deleteEvent $ do
     liftIO mainQuit
     return False
-  vbAll <- vBoxNew False 5
+  set window [ windowTitle         := "WebDollas"
+             , windowDefaultWidth  := 300
+             , windowDefaultHeight := 300 ]
+  vbAll <- vBoxNew False 5 
   containerAdd window vbAll
 
   image <- imageNewFromFile "logo.png"
@@ -251,7 +270,7 @@ createStartWindow sock hdl = do
     info <- hGetLine hdl 
     -- putStrLn info
     when (info /= "failure") $ do
-      loginWindow <- createLoginWindow sock hdl window (head array) info
+      loginWindow <- createLoginWindow hdl window (head array) info
       liftIO $ widgetHideAll window
       liftIO $ widgetShowAll loginWindow
 
@@ -259,7 +278,7 @@ createStartWindow sock hdl = do
   btnRegister <- buttonNewWithLabel "Register"
   btnRegister `on` buttonActivated $ do
     widgetHideAll window
-    registerWindow <- createRegisterWindow sock hdl window
+    registerWindow <- createRegisterWindow hdl window
     widgetShowAll registerWindow
   
   boxPackStart vbAll btnRegister PackGrow 5
@@ -284,7 +303,7 @@ main = do
   
   void initGUI
 
-  window <- createStartWindow sock hdl
+  window <- createStartWindow hdl
   widgetShowAll window
 
   mainGUI
