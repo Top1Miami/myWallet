@@ -44,7 +44,7 @@ executable w-server-exe
   other-modules:
       Paths_myWallet
   hs-source-dirs:
-      app\server
+      app/server
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
@@ -57,7 +57,7 @@ executable w-client-exe
   other-modules:
       Paths_myWallet
   hs-source-dirs:
-      app\client
+      app/client
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5

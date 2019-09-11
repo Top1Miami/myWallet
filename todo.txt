@@ -1,0 +1,4 @@
+2) Gui Align
+3) Hide password
+4) Cryptography
+5) Admin interface

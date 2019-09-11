@@ -54,15 +54,16 @@ dbAction dbName action = do
 addUser :: String -> String -> String -> IO (Maybe String)
 addUser username password mail = do
   conn <- open "tools.db"
-  maybeUser <- selectUser conn username
-  case maybeUser of
-    Nothing -> do
-      execute conn "INSERT INTO users (username, password, mail) VALUES (?, ?, ?)" (username, password, mail)
-      close conn
-      return $ (Just "success")
-    Just user -> do
-      close conn
-      return $ Nothing
+  withExclusiveTransaction conn $ do
+    maybeUser <- selectUser conn username
+    case maybeUser of
+      Nothing -> do
+        execute conn "INSERT INTO users (username, password, mail) VALUES (?, ?, ?)" (username, password, mail)
+        close conn
+        return $ (Just "success")
+      Just user -> do
+        close conn
+        return Nothing
 
 foundAny :: [a] -> Maybe a
 foundAny [] = Nothing
@@ -72,6 +73,7 @@ selectUser :: Connection -> String -> IO (Maybe User)
 selectUser conn username = do
   response <- query conn "SELECT * FROM users WHERE username = (?)" (Only username)
   return $ foundAny response
+
 
 verifyUser :: String -> String -> IO (Maybe String)
 verifyUser username pwd = do
@@ -87,22 +89,23 @@ verifyUser username pwd = do
 addWallet :: String -> String -> Int -> IO (Maybe String)
 addWallet username walletType amountM = do
   conn <- open "tools.db"  
-  maybeUser <- selectUser conn username
-  case maybeUser of 
-    Nothing -> do 
-      putStrLn "user not found, operation failed"
-      close conn
-      return Nothing
-    Just user -> do
-        maybeWallet <- selectWallet conn user walletType
-        case maybeWallet of
-          Nothing -> do 
-            execute conn "INSERT INTO wallets (keeperId, walletType, amountM) VALUES (?, ?, ?)" (userId user, walletType, amountM)
-            close conn
-            return $ Just $ "success"
-          Just wallet -> do
-            close conn
-            return Nothing
+  withExclusiveTransaction conn $ do
+    maybeUser <- selectUser conn username
+    case maybeUser of 
+      Nothing -> do 
+        putStrLn "user not found, operation failed"
+        close conn
+        return Nothing
+      Just user -> do
+          maybeWallet <- selectWallet conn user walletType
+          case maybeWallet of
+            Nothing -> do 
+              execute conn "INSERT INTO wallets (keeperId, walletType, amountM) VALUES (?, ?, ?)" (userId user, walletType, amountM)
+              close conn
+              return $ Just $ "success"
+            Just wallet -> do
+              close conn
+              return Nothing
 
 selectWallet :: Connection -> User -> String -> IO (Maybe Wallet)
 selectWallet conn user walletType = do
@@ -128,13 +131,14 @@ getAllWallets user = do
 transferWallet :: String -> String -> String -> Int -> IO (Maybe String)
 transferWallet username from to toTransfer = do
   conn <- open "tools.db"
-  maybeUser <- selectUser conn username
-  close conn
-  eitherMinus <- updateMinus toTransfer from maybeUser
-  eitherPlus <- updatePlus to maybeUser
-  let eitherBoth = liftA2 (\x y -> (x, y, toTransfer)) eitherMinus eitherPlus
-    
-  either (\x -> return $ Nothing) onSuccess eitherBoth
+  withExclusiveTransaction conn $ do
+    maybeUser <- selectUser conn username
+    close conn
+    eitherMinus <- updateMinus toTransfer from maybeUser
+    eitherPlus <- updatePlus to maybeUser
+    let eitherBoth = liftA2 (\x y -> (x, y, toTransfer)) eitherMinus eitherPlus
+      
+    either (\x -> return $ Nothing) onSuccess eitherBoth
 
 updateMinus :: Int -> String -> Maybe User -> IO (Either Int Wallet)
 updateMinus _ walletType Nothing = return $ Left 0
@@ -166,28 +170,30 @@ updatePlus walletType (Just user) = do
 transferMoney :: String -> String -> String -> Int -> IO (Maybe String)
 transferMoney from to walletType toTransfer = do
   conn <- open "tools.db"
-  maybeFrom <- selectUser conn from
-  maybeTo <- selectUser conn to
-  close conn
-  eitherMinus <- updateMinus toTransfer walletType maybeFrom
-  eitherPlus <- updatePlus walletType maybeTo
-  let eitherBoth = liftA2 (\x y -> (x, y, toTransfer)) eitherMinus eitherPlus
+  withExclusiveTransaction conn $ do
+    maybeFrom <- selectUser conn from
+    maybeTo <- selectUser conn to
+    close conn
+    eitherMinus <- updateMinus toTransfer walletType maybeFrom
+    eitherPlus <- updatePlus walletType maybeTo
+    let eitherBoth = liftA2 (\x y -> (x, y, toTransfer)) eitherMinus eitherPlus
 
-  either (\x -> return $ Nothing) onSuccess eitherBoth
+    either (\x -> return $ Nothing) onSuccess eitherBoth
   
 
 
 onSuccess :: (Wallet, Wallet, Int) -> IO (Maybe String)
 onSuccess (walletFrom, walletTo, money) = do  
-  dbAction "tools.db" $
-    \conn -> do
-      execute conn "UPDATE wallets SET amountM = ? WHERE id = ?" (amountM walletFrom - money, walletId walletFrom)
-      execute conn "UPDATE wallets SET amountM = ? WHERE id = ?" (amountM walletTo + money, walletId walletTo)
   conn <- open "tools.db"
-  maybeFrom <- selectWalletById conn (walletId walletFrom)
-  maybeTo <- selectWalletById conn (walletId walletTo)
+  res <- withExclusiveTransaction conn $ do
+    execute conn "UPDATE wallets SET amountM = ? WHERE id = ?" (amountM walletFrom - money, walletId walletFrom)
+    execute conn "UPDATE wallets SET amountM = ? WHERE id = ?" (amountM walletTo + money, walletId walletTo)
+    maybeFrom <- selectWalletById conn (walletId walletFrom)
+    maybeTo <- selectWalletById conn (walletId walletTo)
+    return $ getWalletInfo maybeFrom maybeTo  
   close conn
-  return $ getWalletInfo maybeFrom maybeTo
+  return res
+  
   where
     getWalletInfo :: Maybe Wallet -> Maybe Wallet -> Maybe String
     getWalletInfo Nothing _ = Nothing
@@ -195,17 +201,18 @@ onSuccess (walletFrom, walletTo, money) = do
     getWalletInfo (Just from) (Just to) = Just (show from ++ show to)
 
 deleteUser :: String -> IO ()
-deleteUser username = 
-  dbAction "tools.db" $
-    \conn -> do
-      execute conn "DELETE FROM users WHERE username = ?" (Only username)
+deleteUser username = do
+  conn <- open "tools.db"
+  withExclusiveTransaction conn $ execute conn "DELETE FROM users WHERE username = ?" (Only username)
+  close conn
 
 deleteWallet :: String -> String -> IO ()
-deleteWallet username walletType = 
-  dbAction "tools.db" $
-    \conn -> do
-      maybeUser <- selectUser conn username
-      case maybeUser of
-        Nothing -> putStrLn "user not found, operation failed"
-        Just user -> do 
-          execute conn "DELETE FROM users WHERE keeperId = ? AND walletType = ?" (userId user, walletType)
+deleteWallet username walletType = do
+  conn <- open "tools.db"
+  withExclusiveTransaction conn $ do
+    maybeUser <- selectUser conn username
+    case maybeUser of
+      Nothing -> putStrLn "user not found, operation failed"
+      Just user -> do 
+        execute conn "DELETE FROM users WHERE keeperId = ? AND walletType = ?" (userId user, walletType)
+  close conn

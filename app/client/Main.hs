@@ -15,12 +15,27 @@ import System.Environment
 import System.Directory
 -- availableWallets :: [String]
 -- availableWallets = ["dollar", "euro", "ruble", "bitcoin"]
-
-getFormatedWindow :: Window -> IO ((Window, VBox))
-getFormatedWindow startWindow = do
+getUpperButtons :: Window -> Window -> Window -> IO(HBox)
+getUpperButtons startWindow prevWindow window = do
+  btnExit <- buttonNewWithLabel "Exit"
+  btnExit `on` buttonActivated $ do
+    liftIO $ removeFile "login.txt"
+    widgetHideAll window
+    widgetShowAll startWindow
+  btnBack <- buttonNewWithLabel "Back"
+  btnBack `on` buttonActivated $ do
+    widgetHideAll window
+    widgetShowAll prevWindow
+  hbox <- hBoxNew False 5
+  boxPackStart hbox btnExit PackNatural 0
+  boxPackStart hbox btnBack PackNatural 0
+  return hbox
+getFormatedWindow :: Handle -> IO ((Window, VBox))
+getFormatedWindow hdl = do
   window <- windowNew
   window `on` deleteEvent $ do
-    liftIO $ widgetShowAll startWindow
+    liftIO $ hClose hdl
+    liftIO $ mainQuit
     return False
   set window [ windowTitle         := "WebDollas"
              , windowDefaultWidth  := 300
@@ -29,10 +44,12 @@ getFormatedWindow startWindow = do
   containerAdd window vbAll
   return (window, vbAll)
 
-createTransferWindow :: Handle -> Window -> String -> String -> IO (Window)
-createTransferWindow hdl startWindow username info = do
-  (window, vbAll) <- getFormatedWindow startWindow
+createTransferWindow :: Handle -> Window -> Window -> String -> String -> IO (Window)
+createTransferWindow hdl startWindow prevWindow username info = do
+  (window, vbAll) <- getFormatedWindow hdl
 
+  hbox <- getUpperButtons startWindow prevWindow window
+  boxPackStart vbAll hbox PackNatural 0
   labelName <- labelNewWithMnemonic "username"
   entName <- entryNew
   set entName [ entryText := "" ]
@@ -75,10 +92,12 @@ createTransferWindow hdl startWindow username info = do
    
   return window
 
-createTransferInsideWindow :: Handle -> Window -> String -> String -> IO (Window)
-createTransferInsideWindow hdl startWindow username info = do
-  (window, vbAll) <- getFormatedWindow startWindow
+createTransferInsideWindow :: Handle -> Window -> Window -> String -> String -> IO (Window)
+createTransferInsideWindow hdl startWindow prevWindow username info = do
+  (window, vbAll) <- getFormatedWindow hdl
 
+  hbox <- getUpperButtons startWindow prevWindow window
+  boxPackStart vbAll hbox PackNatural 0
   wallType <- comboBoxNewText
   sequence $ map (comboBoxAppendText wallType . pack) ["dollar", "euro", "ruble", "bitcoin"]
   entAmount <- entryNew
@@ -110,14 +129,15 @@ createTransferInsideWindow hdl startWindow username info = do
 
 
 
-createButtonWindow :: Handle -> Window -> String -> String -> IO (Window)
-createButtonWindow hdl startWindow username info = do
-  (window, vbAll) <- getFormatedWindow startWindow
-
+createButtonWindow :: Handle -> Window -> Window -> String -> String -> IO (Window)
+createButtonWindow hdl startWindow prevWindow username info = do
+  (window, vbAll) <- getFormatedWindow hdl
+  hbox <- getUpperButtons startWindow prevWindow window
+  boxPackStart vbAll hbox PackNatural 0
   labelInfo <- labelNewWithMnemonic $ username ++ " has " ++ info
   btnTransfer <- buttonNewWithLabel "transfer to other person"
   btnTransfer `on` buttonActivated $ do
-    transferWindow <- createTransferWindow hdl window username info
+    transferWindow <- createTransferWindow hdl startWindow window username info
     widgetHideAll window
     widgetShowAll transferWindow
   btnChange <- buttonNewWithLabel "to your wallet"
@@ -129,19 +149,18 @@ createButtonWindow hdl startWindow username info = do
 
 createLoginWindow :: Handle -> Window -> String -> String ->IO (Window)
 createLoginWindow  hdl startWindow username info = do
-  window <- windowNew
-  set window [ windowTitle         := "WebDollas"
-             , windowDefaultWidth  := 300
-             , windowDefaultHeight := 300 ]
-  window `on` deleteEvent $ do
-    checkExist <- liftIO $ doesFileExist "login.txt"
-    liftIO $ widgetShowAll startWindow
-    return False 
+  (window, vbAll)<- getFormatedWindow hdl
+  btnExit <- buttonNewWithLabel "Exit"
+  btnExit `on` buttonActivated $ do
+    widgetHideAll window
+    widgetShowAll startWindow
+    removeFile "login.txt"
+  boxPackStart vbAll btnExit PackNatural 0
 
   vbWallets <- vBoxNew False 5
   vbAddWallet <- vBoxNew False 5
   notebookW <- notebookNew
-  containerAdd window notebookW
+  boxPackStart vbAll notebookW PackGrow 0
   wallType <- comboBoxNewText
   sequence $ map (comboBoxAppendText wallType . pack) ["dollar", "euro", "ruble", "bitcoin"]
   notebookAppendPage notebookW vbWallets "wallets"
@@ -159,10 +178,10 @@ createLoginWindow  hdl startWindow username info = do
         info <- hGetLine hdl
         when (info == "success") $ do
           putStrLn "added"
-          btnToAdd <- createButtonFromWallet vbWallets hdl window username ("0|" ++ (tail $ init (show x)))
+          btnToAdd <- createButtonFromWallet vbWallets hdl startWindow window username ("0|" ++ (tail $ init (show x)))
           boxPackStart vbWallets btnToAdd PackGrow 0
           widgetShow btnToAdd
-  res <- sequence $ map (createButtonFromWallet vbWallets hdl window username) (words info)
+  res <- sequence $ map (createButtonFromWallet vbWallets hdl startWindow window username) (words info)
   
   widgetShowAll vbWallets
   boxPackStart vbAddWallet wallType PackGrow 0
@@ -172,16 +191,16 @@ createLoginWindow  hdl startWindow username info = do
   return window
   
   where
-    createButtonFromWallet :: VBox -> Handle -> Window -> String -> String ->  IO (Button)
-    createButtonFromWallet vbox hdl startWindow username info = do
+    createButtonFromWallet :: VBox -> Handle -> Window -> Window -> String -> String ->  IO (Button)
+    createButtonFromWallet vbox hdl startWindow prevWindow username info = do
       btn <- buttonNewWithLabel info
       let (amount, wallType) = (strSplit "|" info)
       boxPackStart vbox btn PackGrow 0
       btn `on` buttonActivated $ do
         if ((read amount) /= 0) 
           then do  
-            window <- createButtonWindow hdl startWindow username info
-            widgetHideAll startWindow
+            window <- createButtonWindow hdl startWindow prevWindow username info
+            widgetHideAll prevWindow
             widgetShowAll window
           else do
             dialogW <- messageDialogNew (Just startWindow) [DialogDestroyWithParent] MessageWarning ButtonsNone "There is no operation availabele with no resources on account"  
@@ -192,8 +211,12 @@ createLoginWindow  hdl startWindow username info = do
 
 createRegisterWindow :: Handle -> Window -> IO (Window)
 createRegisterWindow hdl startWindow = do
-  (window, vbAll) <- getFormatedWindow startWindow
-  
+  (window, vbAll) <- getFormatedWindow hdl
+  btnBack <- buttonNewWithLabel "Back"
+  btnBack `on` buttonActivated $ do
+    widgetHideAll window
+    widgetShowAll startWindow
+  boxPackStart vbAll btnBack PackNatural 0
   hbName <- hBoxNew False 5
   labelName <- labelNewWithMnemonic "username"
   entName <- entryNew
@@ -260,15 +283,7 @@ createRegisterWindow hdl startWindow = do
 
 createStartWindow :: Handle -> IO (Window)
 createStartWindow hdl = do 
-  window <- windowNew
-  window `on` deleteEvent $ do
-    liftIO mainQuit
-    return False
-  set window [ windowTitle         := "WebDollas"
-             , windowDefaultWidth  := 300
-             , windowDefaultHeight := 300 ]
-  vbAll <- vBoxNew False 5 
-  containerAdd window vbAll
+  (window, vbAll) <- getFormatedWindow hdl
   window `on` mapEvent $ do 
     checkExist <- liftIO $ doesFileExist "login.txt"
     liftIO $ when (checkExist) $ do
@@ -295,6 +310,11 @@ createStartWindow hdl = do
   set entName [ entryText := "input username" ]
   entPsw <- entryNew
   set entPsw [ entryText := "input password" ]
+  entName `on` entryActivated $ do
+    entrySetText entName ""
+  entPsw `on` entryActivated $ do
+    entrySetText entPsw ""
+    entrySetVisibility entPsw False
   rem <- checkButtonNewWithLabel "Remember me"
   boxPackStart vbLogin entName PackGrow 5
   boxPackStart vbLogin entPsw PackGrow 5
