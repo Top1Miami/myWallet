@@ -45,8 +45,6 @@ instance FromRow User where
 instance FromRow Wallet where
   fromRow = Wallet <$> field <*> field <*> field <*> field
 
--- @TODO write on stms, clean imports and write nice functions to delete extra code 
-
 dbAction :: String -> (Connection -> IO ()) -> IO ()
 dbAction dbName action = do
   conn <- open dbName

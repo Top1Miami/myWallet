@@ -8,11 +8,11 @@ import Control.Monad.IO.Class
 import Data.IORef
 import Data.Typeable
 import Data.Strings
-import Data.Text hiding (head, tail, map, foldl, words, init, tail)
+import Data.Text hiding (head, tail, map, foldl, words, init, tail, any, reverse)
 import System.IO
 import Graphics.UI.Gtk hiding (Action, backspace, Socket)
 import System.Environment
-
+import System.Directory
 -- availableWallets :: [String]
 -- availableWallets = ["dollar", "euro", "ruble", "bitcoin"]
 
@@ -32,31 +32,47 @@ getFormatedWindow startWindow = do
 createTransferWindow :: Handle -> Window -> String -> String -> IO (Window)
 createTransferWindow hdl startWindow username info = do
   (window, vbAll) <- getFormatedWindow startWindow
-  
+
+  labelName <- labelNewWithMnemonic "username"
   entName <- entryNew
   set entName [ entryText := "" ]
+  labelAmount <- labelNewWithMnemonic "amount of money to transfer"
   entAmount <- entryNew
   set entAmount [ entryText := "" ]
   btnTransfer <- buttonNewWithLabel "transfer"
+  boxPackStart vbAll labelName PackGrow 0
   boxPackStart vbAll entName PackGrow 0
+  boxPackStart vbAll labelAmount PackGrow 0
   boxPackStart vbAll entAmount PackGrow 0
   boxPackStart vbAll btnTransfer PackGrow 0
   btnTransfer `on` buttonActivated $ do
     let (amount, wallType) = (strSplit "|" info)
     entAmountStr <- entryGetText entAmount
     entNameStr <- entryGetText entName
-    -- putStrLn $ entAmountStr ++ " " ++ amount
-    if((read amount::Int) > (read entAmountStr::Int))
+    let checkForUnused = foldl (\x c -> x && (any (c == ) "abcdefghikjlmnopqrstuvwxyzABCDEFGHIKJLMNOPQRSTXYZ1234567890")) True entNameStr
+    let checkNumber = foldl (\x c -> x && (any (c == ) "1234567890")) True entAmountStr
+    if(not checkNumber)
       then do
-        putStrLn $! "transfer " ++ username ++ " " ++ entNameStr ++ " " ++ wallType ++ " " ++ entAmountStr
-        hPutStrLn hdl $! "transfer " ++ username ++ " " ++ entNameStr ++ " " ++ wallType ++ " " ++ entAmountStr
-        output <- hGetLine hdl
-        putStrLn output
-        widgetHideAll window
-        widgetShowAll startWindow
-      else do
-        dialogW <- messageDialogNew (Just window) [DialogDestroyWithParent] MessageWarning ButtonsNone "Not enough money on account"  
+        dialogW <- messageDialogNew (Just window) [DialogDestroyWithParent] MessageWarning ButtonsNone "Use only numbers"  
         widgetShow dialogW
+      else
+        if(not checkForUnused)
+          then do
+            dialogW <- messageDialogNew (Just window) [DialogDestroyWithParent] MessageWarning ButtonsNone "Use only letters either case, numbers"  
+            widgetShow dialogW
+          else 
+            if((read amount::Int) > (read entAmountStr::Int))
+              then do
+                putStrLn $! "transfer " ++ username ++ " " ++ entNameStr ++ " " ++ wallType ++ " " ++ entAmountStr
+                hPutStrLn hdl $! "transfer " ++ username ++ " " ++ entNameStr ++ " " ++ wallType ++ " " ++ entAmountStr
+                output <- hGetLine hdl
+                putStrLn output
+                widgetHideAll window
+                widgetShowAll startWindow
+              else do
+                dialogW <- messageDialogNew (Just window) [DialogDestroyWithParent] MessageWarning ButtonsNone "Not enough money on account"  
+                widgetShow dialogW
+   
   return window
 
 createTransferInsideWindow :: Handle -> Window -> String -> String -> IO (Window)
@@ -118,10 +134,10 @@ createLoginWindow  hdl startWindow username info = do
              , windowDefaultWidth  := 300
              , windowDefaultHeight := 300 ]
   window `on` deleteEvent $ do
+    checkExist <- liftIO $ doesFileExist "login.txt"
     liftIO $ widgetShowAll startWindow
     return False 
 
--- @TODO create notebook for changing pages to create wallets
   vbWallets <- vBoxNew False 5
   vbAddWallet <- vBoxNew False 5
   notebookW <- notebookNew
@@ -160,7 +176,6 @@ createLoginWindow  hdl startWindow username info = do
     createButtonFromWallet vbox hdl startWindow username info = do
       btn <- buttonNewWithLabel info
       let (amount, wallType) = (strSplit "|" info)
-      putStrLn $ "buttonCreated " ++ info
       boxPackStart vbox btn PackGrow 0
       btn `on` buttonActivated $ do
         if ((read amount) /= 0) 
@@ -203,6 +218,7 @@ createRegisterWindow hdl startWindow = do
   boxPackStart hbPsw entPsw PackGrow 5
   boxPackStart vbAll hbPsw PackGrow 0
 
+
   hbPswRepeat <- hBoxNew False 5
   labelPswRepeat <- labelNewWithMnemonic "repeat password"
   entPswRepeat <- entryNew
@@ -215,22 +231,31 @@ createRegisterWindow hdl startWindow = do
   btnRegister <- buttonNewWithLabel "Register"
 
   btnRegister `on` buttonActivated $ do
-    array <- sequence $ map (entryGetText) [entName, entPsw, entMail] 
-    let check = foldl (\x y -> x && not (strNull y)) True array
+    array <- sequence $ map (entryGetText) [entName, entPsw, entMail]
+    arrayTwo <- sequence $ map (entryGetText) [entName, entPsw, entMail, entPswRepeat]::IO([String])
+    pswrd <- entryGetText entPsw :: IO (String)
+    pswrdRepeat <- entryGetText entPswRepeat
+    let (check, pswEqual) = (foldl (\x y -> x && not (strNull y)) True array, pswrd == pswrdRepeat)
+    let checkForUnused = foldl (\xStr singleStr -> xStr && (foldl (\x c -> x && (any (c == ) "abcdefghikjlmnopqrstuvwxyzABCDEFGHIKJLMNOPQRSTXYZ1234567890")) True singleStr)) True arrayTwo
     confirmed <- toggleButtonGetActive confirm
-    if(confirmed && check)
+    if(not checkForUnused)
       then do
-        hPutStrLn hdl $! "register " ++ (foldl (\x y -> x ++ " " ++ y) "" array)
-        liftIO $ widgetShowAll startWindow
-        liftIO $ widgetHideAll window
-      else do
-        dialogW <- messageDialogNew (Just window) [DialogDestroyWithParent] MessageWarning ButtonsNone "Please fill all the specified fieilds and accept policies"  
+        dialogW <- messageDialogNew (Just window) [DialogDestroyWithParent] MessageWarning ButtonsNone "Use only letters either case, numbers"  
         widgetShow dialogW
+      else 
+        if(confirmed && check && pswEqual)
+          then do
+            hPutStrLn hdl $! "register " ++ (foldl (\x y -> x ++ " " ++ y) "" array)
+            widgetShowAll startWindow
+            widgetHideAll window
+          else do
+            dialogW <- messageDialogNew (Just window) [DialogDestroyWithParent] MessageWarning ButtonsNone "Please fill all the specified fieilds and accept policies"  
+            widgetShow dialogW
 
   boxPackStart vbAll confirm PackGrow 0
   boxPackStart vbAll btnRegister PackGrow 0
 
-  return window
+  return window 
 
 
 createStartWindow :: Handle -> IO (Window)
@@ -244,6 +269,20 @@ createStartWindow hdl = do
              , windowDefaultHeight := 300 ]
   vbAll <- vBoxNew False 5 
   containerAdd window vbAll
+  window `on` mapEvent $ do 
+    checkExist <- liftIO $ doesFileExist "login.txt"
+    liftIO $ when (checkExist) $ do
+      input <- liftIO $ readFile "login.txt"
+      let (login, pwd) = strSplit "\",\"" $ iterate (reverse . (strDrop 2)) input !! 2
+      hPutStrLn hdl $ "login " ++ login ++ " " ++ pwd
+      putStrLn "inHere"
+      info <- hGetLine hdl 
+      putStrLn info
+      loginWindow <- createLoginWindow hdl window login info
+      widgetHideAll window
+      widgetShowAll loginWindow
+    return False
+      
 
   image <- imageNewFromFile "logo.png"
   boxPackStart vbAll image PackGrow 5
@@ -268,11 +307,13 @@ createStartWindow hdl = do
     array <- sequence $ map (entryGetText) [entName, entPsw]
     hPutStrLn hdl $ "login " ++ (foldl (\x y -> x ++ " " ++ y) "" array)
     info <- hGetLine hdl 
-    -- putStrLn info
     when (info /= "failure") $ do
+      checkRem <- toggleButtonGetActive rem
+      when (checkRem) $ do
+        writeFile "login.txt" (show array)
       loginWindow <- createLoginWindow hdl window (head array) info
-      liftIO $ widgetHideAll window
-      liftIO $ widgetShowAll loginWindow
+      widgetHideAll window
+      widgetShowAll loginWindow
 
   boxPackStart vbAll btnLogin PackNatural 5
   btnRegister <- buttonNewWithLabel "Register"
