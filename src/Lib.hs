@@ -5,6 +5,7 @@ module Lib
   , transferMoney
   , verifyUser
   , transferWallet
+  , depositWallet
   ) where
 
 import Control.Applicative
@@ -45,12 +46,6 @@ instance FromRow User where
 instance FromRow Wallet where
   fromRow = Wallet <$> field <*> field <*> field <*> field
 
-dbAction :: String -> (Connection -> IO ()) -> IO ()
-dbAction dbName action = do
-  conn <- open dbName
-  action conn
-  close conn
-
 addUser :: String -> String -> String -> IO (Maybe String)
 addUser username password mail = do
   conn <- open "tools.db"
@@ -75,16 +70,18 @@ selectUser conn username = do
   return $ foundAny response
 
 
-verifyUser :: String -> String -> IO (Maybe String)
-verifyUser username pwd = do
+verifyUser :: String -> String -> Bool -> IO (Maybe String)
+verifyUser username pwd needPsw= do
   conn <- open "tools.db"
   maybeUser <- selectUser conn username
   putStrLn $ show maybeUser
   case maybeUser of
     Nothing -> return Nothing
-    Just user -> if ((password user) == pwd)
+    Just user -> if ((password user) == pwd || needPsw)  
       then fmap Just $ (getAllWallets user) >>= (maybe (return "NotFound") (\list -> return $ foldl (\conc arg -> conc ++ (show arg) ++ " ") "" list))
       else return $ Nothing
+
+
 
 addWallet :: String -> String -> Int -> IO (Maybe String)
 addWallet username walletType amountM = do
@@ -131,21 +128,21 @@ getAllWallets user = do
 transferWallet :: String -> String -> String -> Int -> IO (Maybe String)
 transferWallet username from to toTransfer = do
   conn <- open "tools.db"
-  withExclusiveTransaction conn $ do
+  res <- withExclusiveTransaction conn $ do
     maybeUser <- selectUser conn username
-    close conn
-    eitherMinus <- updateMinus toTransfer from maybeUser
-    eitherPlus <- updatePlus to maybeUser
+    eitherMinus <- updateMinus conn toTransfer from maybeUser
+    eitherPlus <- updatePlus conn to maybeUser
     let eitherBoth = liftA2 (\x y -> (x, y, toTransfer)) eitherMinus eitherPlus
       
-    either (\x -> return $ Nothing) onSuccess eitherBoth
-
-updateMinus :: Int -> String -> Maybe User -> IO (Either Int Wallet)
-updateMinus _ walletType Nothing = return $ Left 0
-updateMinus amount walletType (Just user) = do
-  conn <- open "tools.db"
-  maybeWallet <- selectWallet conn user walletType
+    either (\x -> return $ Nothing) (onSuccess conn) eitherBoth
   close conn
+  return res
+
+
+updateMinus :: Connection -> Int -> String -> Maybe User -> IO (Either Int Wallet)
+updateMinus _ _ _ Nothing = return $ Left 0
+updateMinus conn amount walletType (Just user) = do
+  maybeWallet <- selectWallet conn user walletType
   case maybeWallet of 
     Nothing -> return $ Left $ -2
     Just wallet -> if(amountM wallet >= amount)
@@ -155,12 +152,10 @@ updateMinus amount walletType (Just user) = do
         putStrLn "transaction failed"
         return $ Left $ -1
 
-updatePlus :: String -> Maybe User -> IO (Either Int Wallet)
-updatePlus walletType Nothing = return $ Left 0
-updatePlus walletType (Just user) = do
-  conn <- open "tools.db"
+updatePlus :: Connection -> String -> Maybe User -> IO (Either Int Wallet)
+updatePlus _ _ Nothing = return $ Left 0
+updatePlus conn walletType (Just user) = do
   maybeWallet <- selectWallet conn user walletType
-  close conn
   case maybeWallet of 
     Nothing -> return $ Left $ -1
     Just wallet -> do
@@ -170,30 +165,26 @@ updatePlus walletType (Just user) = do
 transferMoney :: String -> String -> String -> Int -> IO (Maybe String)
 transferMoney from to walletType toTransfer = do
   conn <- open "tools.db"
-  withExclusiveTransaction conn $ do
+  res <- withExclusiveTransaction conn $ do
     maybeFrom <- selectUser conn from
     maybeTo <- selectUser conn to
-    close conn
-    eitherMinus <- updateMinus toTransfer walletType maybeFrom
-    eitherPlus <- updatePlus walletType maybeTo
+    putStrLn "here"
+    eitherMinus <- updateMinus conn toTransfer walletType maybeFrom
+    eitherPlus <- updatePlus conn walletType maybeTo
     let eitherBoth = liftA2 (\x y -> (x, y, toTransfer)) eitherMinus eitherPlus
 
-    either (\x -> return $ Nothing) onSuccess eitherBoth
-  
-
-
-onSuccess :: (Wallet, Wallet, Int) -> IO (Maybe String)
-onSuccess (walletFrom, walletTo, money) = do  
-  conn <- open "tools.db"
-  res <- withExclusiveTransaction conn $ do
-    execute conn "UPDATE wallets SET amountM = ? WHERE id = ?" (amountM walletFrom - money, walletId walletFrom)
-    execute conn "UPDATE wallets SET amountM = ? WHERE id = ?" (amountM walletTo + money, walletId walletTo)
-    maybeFrom <- selectWalletById conn (walletId walletFrom)
-    maybeTo <- selectWalletById conn (walletId walletTo)
-    return $ getWalletInfo maybeFrom maybeTo  
+    either (\x -> return $ Nothing) (onSuccess conn) eitherBoth
   close conn
-  return res
-  
+  return res 
+
+
+onSuccess :: Connection -> (Wallet, Wallet, Int) -> IO (Maybe String)
+onSuccess conn (walletFrom, walletTo, money) = do  
+  execute conn "UPDATE wallets SET amountM = ? WHERE id = ?" (amountM walletFrom - money, walletId walletFrom)
+  execute conn "UPDATE wallets SET amountM = ? WHERE id = ?" (amountM walletTo + money, walletId walletTo)
+  maybeFrom <- selectWalletById conn (walletId walletFrom)
+  maybeTo <- selectWalletById conn (walletId walletTo)
+  return $ getWalletInfo maybeFrom maybeTo    
   where
     getWalletInfo :: Maybe Wallet -> Maybe Wallet -> Maybe String
     getWalletInfo Nothing _ = Nothing
@@ -216,3 +207,18 @@ deleteWallet username walletType = do
       Just user -> do 
         execute conn "DELETE FROM users WHERE keeperId = ? AND walletType = ?" (userId user, walletType)
   close conn
+
+depositWallet :: String -> String -> String -> IO (Bool)
+depositWallet username walletType amount = do
+  conn <- open "tools.db"
+  res <- withExclusiveTransaction conn $ do
+    maybeUser <- selectUser conn username
+    case maybeUser of
+      Nothing -> do 
+        putStrLn "user not found, operation failed"
+        return False
+      Just user -> do
+        execute conn "UPDATE wallets SET amountM = ? Where keeperId = ? AND walletType = ?" ((read amount):: Int, userId user, walletType)
+        return True
+  close conn
+  return res

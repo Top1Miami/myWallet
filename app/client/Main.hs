@@ -19,7 +19,9 @@ getUpperButtons :: Window -> Window -> Window -> IO(HBox)
 getUpperButtons startWindow prevWindow window = do
   btnExit <- buttonNewWithLabel "Exit"
   btnExit `on` buttonActivated $ do
-    liftIO $ removeFile "login.txt"
+    checkExist <- doesFileExist "login.txt"
+    liftIO $ when (checkExist) $ do
+      removeFile "login.txt"
     widgetHideAll window
     widgetShowAll startWindow
   btnBack <- buttonNewWithLabel "Back"
@@ -39,7 +41,9 @@ getFormatedWindow hdl = do
     return False
   set window [ windowTitle         := "WebDollas"
              , windowDefaultWidth  := 300
-             , windowDefaultHeight := 300 ]
+             , windowDefaultHeight := 300 
+             , windowResizable    := False
+             ]
   vbAll <- vBoxNew False 5 
   containerAdd window vbAll
   return (window, vbAll)
@@ -85,7 +89,7 @@ createTransferWindow hdl startWindow prevWindow username info = do
                 output <- hGetLine hdl
                 putStrLn output
                 widgetHideAll window
-                widgetShowAll startWindow
+                widgetShowAll prevWindow
               else do
                 dialogW <- messageDialogNew (Just window) [DialogDestroyWithParent] MessageWarning ButtonsNone "Not enough money on account"  
                 widgetShow dialogW
@@ -121,7 +125,7 @@ createTransferInsideWindow hdl startWindow prevWindow username info = do
             output <- hGetLine hdl
             putStrLn output
             widgetHideAll window
-            widgetShowAll startWindow
+            widgetShowAll prevWindow
           else do
             dialogW <- messageDialogNew (Just window) [DialogDestroyWithParent] MessageWarning ButtonsNone "Not enough money on account"  
             widgetShow dialogW
@@ -150,13 +154,31 @@ createButtonWindow hdl startWindow prevWindow username info = do
 createLoginWindow :: Handle -> Window -> String -> String ->IO (Window)
 createLoginWindow  hdl startWindow username info = do
   (window, vbAll)<- getFormatedWindow hdl
+  window `on` mapEvent $ do 
+
+    (x,y) <- liftIO $ windowGetDefaultSize window
+    liftIO $ putStrLn $ (show x) ++ " " ++ (show y)
+    return False
   btnExit <- buttonNewWithLabel "Exit"
   btnExit `on` buttonActivated $ do
+    checkExist <- doesFileExist "login.txt"
+    liftIO $ when (checkExist) $ do
+      removeFile "login.txt"
     widgetHideAll window
     widgetShowAll startWindow
-    removeFile "login.txt"
-  boxPackStart vbAll btnExit PackNatural 0
-
+  hUpperBox <- hBoxNew False 5
+  btnRefresh <- buttonNewWithLabel "Refresh"
+  btnRefresh `on` buttonActivated $ do
+    hPutStrLn hdl $ "info " ++ username
+    updatedInfo <- hGetLine hdl
+    redrawnWindow <- createLoginWindow hdl startWindow username updatedInfo
+    widgetHideAll window
+    widgetShowAll redrawnWindow
+    widgetDestroy window
+  boxPackStart hUpperBox btnExit PackNatural 0
+  boxPackStart hUpperBox btnRefresh PackNatural 0
+  boxPackStart vbAll hUpperBox PackNatural 0
+  
   vbWallets <- vBoxNew False 5
   vbAddWallet <- vBoxNew False 5
   notebookW <- notebookNew

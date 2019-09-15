@@ -10,9 +10,10 @@ import Lib (
   , transferMoney
   , verifyUser
   , transferWallet
+  , depositWallet
   )
 
-data SqlAction = Login String String | Register String String String | Transfer String String String String | Change String String String String | CrWallet String String String deriving (Show)
+data SqlAction = Login String String | Register String String String | Info String | Transfer String String String String | Change String String String String | CrWallet String String String | Deposit String String String deriving (Show)
 
 toSqlAction :: [String] -> SqlAction
 toSqlAction list =
@@ -22,6 +23,8 @@ toSqlAction list =
     "createWallet" -> CrWallet (list !! 1) (list !! 2) "0"
     "transfer" -> Transfer (list !! 1) (list !! 2) (list !! 3) (list !! 4)
     "change" -> Change (list !! 1) (list !! 2) (list !! 3) (list !! 4) 
+    "deposit" -> Deposit (list !! 1) (list !! 2) (list !! 3)
+    "info" -> Info (list !! 1)
 
 evalActionInfo :: Handle -> Maybe String -> IO (Bool)
 evalActionInfo hdl Nothing = do
@@ -35,7 +38,7 @@ evalActionInfo hdl (Just output) = do
 performAction :: Handle -> SqlAction -> IO (Bool)
 performAction hdl login@(Login username password) = do
   putStrLn $ show login
-  verified <- verifyUser username password
+  verified <- verifyUser username password False
   evalActionInfo hdl verified
 performAction hdl (Register username password mail) = do
   added <- addUser username password mail
@@ -49,6 +52,11 @@ performAction hdl (Change username from to toTransfer) = do
 performAction hdl (CrWallet username walletType amount) = do
   added <- addWallet username walletType (read amount) 
   evalActionInfo hdl added
+performAction hdl (Deposit username walletType amount) = do
+  depositWallet username walletType (read amount)
+performAction hdl (Info username) = do
+  verified <- verifyUser username "trash" True
+  evalActionInfo hdl verified
 
 mainLoop :: Socket -> IO ()
 mainLoop sock = do
