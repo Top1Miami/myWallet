@@ -32,6 +32,7 @@ getUpperButtons startWindow prevWindow window = do
   boxPackStart hbox btnExit PackNatural 0
   boxPackStart hbox btnBack PackNatural 0
   return hbox
+
 getFormatedWindow :: Handle -> IO ((Window, VBox))
 getFormatedWindow hdl = do
   window <- windowNew
@@ -43,7 +44,9 @@ getFormatedWindow hdl = do
              , windowDefaultWidth  := 300
              , windowDefaultHeight := 300 
              , windowResizable    := False
+             -- , windowAllowGrow     := False
              ]
+  windowSetDefaultSize window 300 300
   vbAll <- vBoxNew False 5 
   containerAdd window vbAll
   return (window, vbAll)
@@ -307,22 +310,15 @@ createStartWindow :: Handle -> IO (Window)
 createStartWindow hdl = do 
   (window, vbAll) <- getFormatedWindow hdl
   window `on` mapEvent $ do 
-    checkExist <- liftIO $ doesFileExist "login.txt"
-    liftIO $ when (checkExist) $ do
-      input <- liftIO $ readFile "login.txt"
-      let (login, pwd) = strSplit "\",\"" $ iterate (reverse . (strDrop 2)) input !! 2
-      hPutStrLn hdl $ "login " ++ login ++ " " ++ pwd
-      putStrLn "inHere"
-      info <- hGetLine hdl 
-      putStrLn info
-      loginWindow <- createLoginWindow hdl window login info
-      widgetHideAll window
-      widgetShowAll loginWindow
+    liftIO $ hPutStrLn hdl "autoLogin"
+    result <- liftIO $ hGetLine hdl
+    liftIO $ when(result /= "failure") $ do
+      nextWindow <- createLoginWindow hdl window info  
     return False
       
 
-  image <- imageNewFromFile "logo.png"
-  boxPackStart vbAll image PackGrow 5
+  -- image <- imageNewFromFile "logo.png"
+  -- boxPackStart vbAll image PackGrow 5
 
   hbLogin <- hBoxNew False 5
   boxPackStart vbAll hbLogin PackGrow 5
@@ -366,6 +362,7 @@ createStartWindow hdl = do
   
   boxPackStart vbAll btnRegister PackGrow 5
   return $ window
+
 
 main :: IO ()
 main = do

@@ -3,6 +3,7 @@ import Network.Socket
 import Control.Concurrent
 import System.IO
 import System.Environment
+import Data.Strings
 import Control.Monad.Fix (fix)
 import Lib (
     addWallet
@@ -11,12 +12,14 @@ import Lib (
   , verifyUser
   , transferWallet
   , depositWallet
+  , autoLogin
   )
 
-data SqlAction = Login String String | Register String String String | Info String | Transfer String String String String | Change String String String String | CrWallet String String String | Deposit String String String deriving (Show)
+data SqlAction = AutoLogin String | Login String String | Register String String String | Info String | Transfer String String String String | Change String String String String | CrWallet String String String | Deposit String String String deriving (Show)
 
 toSqlAction :: [String] -> SqlAction
 toSqlAction list =
+  -- Rewrite
   let comm = head list in case comm of
     "login" -> Login (list !! 1) (list !! 2)
     "register" -> Register (list !! 1) (list !! 2) (list !! 3)
@@ -24,14 +27,14 @@ toSqlAction list =
     "transfer" -> Transfer (list !! 1) (list !! 2) (list !! 3) (list !! 4)
     "change" -> Change (list !! 1) (list !! 2) (list !! 3) (list !! 4) 
     "deposit" -> Deposit (list !! 1) (list !! 2) (list !! 3)
-    "info" -> Info (list !! 1)
+    "info" -> Info $ list !! 1
+    "autologin" -> AutoLogin $ list !! 1 
 
 evalActionInfo :: Handle -> Maybe String -> IO (Bool)
 evalActionInfo hdl Nothing = do
   hPutStrLn hdl "failure"
   return $ False
 evalActionInfo hdl (Just output) = do
-  -- putStrLn output
   hPutStrLn hdl output
   return $ True
 
@@ -57,6 +60,10 @@ performAction hdl (Deposit username walletType amount) = do
 performAction hdl (Info username) = do
   verified <- verifyUser username "trash" True
   evalActionInfo hdl verified
+performAction hdl (AutoLogin ip) = do
+  logedIn <- autoLogin ip
+  evalActionInfo hdl logedIn
+
 
 mainLoop :: Socket -> IO ()
 mainLoop sock = do
@@ -65,14 +72,16 @@ mainLoop sock = do
   mainLoop sock
 
 runConn :: (Socket, SockAddr) -> IO ()
-runConn (sock, _) = do
+runConn (sock, sockAddr) = do
+  -- putStrLn $ show sockAddr
   hdl <- socketToHandle sock ReadWriteMode
   hSetBuffering hdl NoBuffering
+  let (ip, port) = strSplit ":" sockAddr
 
   fix $ \loop -> do
     input <- hGetLine hdl
     putStrLn input
-    let inputSplit = words input
+    let inputSplit = words (input ++ " " ++ ip)
     res <- performAction hdl $ toSqlAction inputSplit
     putStrLn $ show res
     loop

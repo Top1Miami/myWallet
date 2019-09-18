@@ -1,4 +1,9 @@
+1) Keep hisotry
 2) Gui Align
 3) Hide password
 4) Cryptography
 5) Admin interface
+6) Read about handle errors, rewrite transfer functions
+7) Read about implementation of cryptonite or PGP
+8) test concurrent user's work
+9) Refactor

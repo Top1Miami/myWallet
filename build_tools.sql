@@ -14,3 +14,8 @@ CREATE TABLE wallets (
   walletType TEXT,
   amountM INTEGER
   );
+CREATE TABLE logins (
+  id INTEGER PRIMARY KEY,
+  keeperId INTEGER,
+  ip TEXT
+  );

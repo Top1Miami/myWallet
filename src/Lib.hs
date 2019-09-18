@@ -6,6 +6,7 @@ module Lib
   , verifyUser
   , transferWallet
   , depositWallet
+  , autoLogin
   ) where
 
 import Control.Applicative
@@ -24,6 +25,12 @@ data Wallet = Wallet { walletId :: Int
                      , walletType :: String
                      , amountM :: Int 
                      }
+
+data Login = Login { loginId :: Int
+                   , loginKeeperId :: Int
+                   , ip :: String
+                   }
+
 
 instance Show User where
   show user = mconcat [ show $ userId user
@@ -45,6 +52,9 @@ instance FromRow User where
 
 instance FromRow Wallet where
   fromRow = Wallet <$> field <*> field <*> field <*> field
+
+instance FromRow Login where
+  fromRow = Login <$> field <*> field <*> field  
 
 addUser :: String -> String -> String -> IO (Maybe String)
 addUser username password mail = do
@@ -86,23 +96,25 @@ verifyUser username pwd needPsw= do
 addWallet :: String -> String -> Int -> IO (Maybe String)
 addWallet username walletType amountM = do
   conn <- open "tools.db"  
-  withExclusiveTransaction conn $ do
+  res <- withExclusiveTransaction conn $ do
     maybeUser <- selectUser conn username
     case maybeUser of 
       Nothing -> do 
         putStrLn "user not found, operation failed"
-        close conn
+        -- close conn
         return Nothing
       Just user -> do
           maybeWallet <- selectWallet conn user walletType
           case maybeWallet of
             Nothing -> do 
               execute conn "INSERT INTO wallets (keeperId, walletType, amountM) VALUES (?, ?, ?)" (userId user, walletType, amountM)
-              close conn
+              -- close conn
               return $ Just $ "success"
             Just wallet -> do
-              close conn
+              -- close conn
               return Nothing
+  close conn
+  return res
 
 selectWallet :: Connection -> User -> String -> IO (Maybe Wallet)
 selectWallet conn user walletType = do
@@ -218,7 +230,21 @@ depositWallet username walletType amount = do
         putStrLn "user not found, operation failed"
         return False
       Just user -> do
-        execute conn "UPDATE wallets SET amountM = ? Where keeperId = ? AND walletType = ?" ((read amount):: Int, userId user, walletType)
+        execute conn "UPDATE wallets SET amountM = ? WHERE keeperId = ? AND walletType = ?" ((read amount):: Int, userId user, walletType)
         return True
   close conn
   return res
+
+autoLogin :: String -> IO (Maybe String)
+autoLogin ip = do
+  conn <- open "tools.db"
+  login <- query conn "SELECT * FROM logins WHERE ip = ?" (Only ip) :: IO [Login]
+  case (foundAny login) of
+    Nothing -> do 
+      close conn
+      return $ Just "unloged"
+    Just x -> do
+      userList <- query conn "SELECT * FROM users WHERE id = ?" (Only $ loginKeeperId x) :: IO [User]
+      close conn
+      (Just <$> (maybe (return Nothing) getAllWallets (foundAny userList)) >>= (maybe (return "NotFound") (\list -> return $ foldl (\conc arg -> conc ++ (show arg) ++ " ") "" list))
+      
