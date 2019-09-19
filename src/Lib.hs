@@ -7,6 +7,8 @@ module Lib
   , transferWallet
   , depositWallet
   , autoLogin
+  , logOut
+  , logIn
   ) where
 
 import Control.Applicative
@@ -59,16 +61,16 @@ instance FromRow Login where
 addUser :: String -> String -> String -> IO (Maybe String)
 addUser username password mail = do
   conn <- open "tools.db"
-  withExclusiveTransaction conn $ do
+  res <- withExclusiveTransaction conn $ do
     maybeUser <- selectUser conn username
     case maybeUser of
       Nothing -> do
         execute conn "INSERT INTO users (username, password, mail) VALUES (?, ?, ?)" (username, password, mail)
-        close conn
         return $ (Just "success")
       Just user -> do
-        close conn
         return Nothing
+  close conn
+  return res      
 
 foundAny :: [a] -> Maybe a
 foundAny [] = Nothing
@@ -88,9 +90,9 @@ verifyUser username pwd needPsw= do
   case maybeUser of
     Nothing -> return Nothing
     Just user -> if ((password user) == pwd || needPsw)  
-      then fmap Just $ (getAllWallets user) >>= (maybe (return "NotFound") (\list -> return $ foldl (\conc arg -> conc ++ (show arg) ++ " ") "" list))
+      then fmap Just $ (getAllWallets user) >>= 
+        (maybe (return "NotFound") (\list -> return $ foldl (\conc arg -> conc ++ (show arg) ++ " ") "" list))
       else return $ Nothing
-
 
 
 addWallet :: String -> String -> Int -> IO (Maybe String)
@@ -238,13 +240,39 @@ depositWallet username walletType amount = do
 autoLogin :: String -> IO (Maybe String)
 autoLogin ip = do
   conn <- open "tools.db"
+  putStrLn ip
   login <- query conn "SELECT * FROM logins WHERE ip = ?" (Only ip) :: IO [Login]
+  putStrLn "ne run" 
   case (foundAny login) of
     Nothing -> do 
       close conn
-      return $ Just "unloged"
+      return $ Nothing
     Just x -> do
       userList <- query conn "SELECT * FROM users WHERE id = ?" (Only $ loginKeeperId x) :: IO [User]
       close conn
-      (Just <$> (maybe (return Nothing) getAllWallets (foundAny userList)) >>= (maybe (return "NotFound") (\list -> return $ foldl (\conc arg -> conc ++ (show arg) ++ " ") "" list))
-      
+      case (foundAny userList) of
+        Nothing -> do
+          return $ Nothing
+        Just user -> do
+          fmap Just $ (getAllWallets user) >>= (maybe (return "NotFound") (\list -> return $ foldl (\conc arg -> conc ++ (show arg) ++ " ") "" list)) >>= (\inp -> return $ inp ++ (userName user))
+
+logOut :: String -> IO ()
+logOut ip = do
+  conn <- open "tools.db"
+  withExclusiveTransaction conn $ do
+    execute conn "DELETE FROM logins WHERE ip = ?" (Only ip)
+  close conn
+
+logIn :: String -> String -> IO (Maybe String)
+logIn username ip = do
+  conn <- open "tools.db"
+  res <- withExclusiveTransaction conn $ do
+    userList <- query conn "SELECT * FROM users WHERE userName = ?" (Only username) :: IO [User]
+    case (foundAny userList) of
+      Nothing -> do
+        return Nothing
+      Just user -> do
+        execute conn "INSERT INTO logins (keeperId, ip) VALUES (?, ?)" (userId user , ip)
+        return $ Just "success"
+  close conn
+  return res

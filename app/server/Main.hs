@@ -13,9 +13,11 @@ import Lib (
   , transferWallet
   , depositWallet
   , autoLogin
+  , logOut
+  , logIn
   )
 
-data SqlAction = AutoLogin String | Login String String | Register String String String | Info String | Transfer String String String String | Change String String String String | CrWallet String String String | Deposit String String String deriving (Show)
+data SqlAction = SaveLogin String String | Logout String | AutoLogin String | Login String String | Register String String String | Info String | Transfer String String String String | Change String String String String | CrWallet String String String | Deposit String String String deriving (Show)
 
 toSqlAction :: [String] -> SqlAction
 toSqlAction list =
@@ -28,13 +30,17 @@ toSqlAction list =
     "change" -> Change (list !! 1) (list !! 2) (list !! 3) (list !! 4) 
     "deposit" -> Deposit (list !! 1) (list !! 2) (list !! 3)
     "info" -> Info $ list !! 1
-    "autologin" -> AutoLogin $ list !! 1 
-
+    "autologin" -> AutoLogin $ list !! 1
+    "logout" -> Logout $ list !! 1
+    "savelogin" -> SaveLogin (list !! 1) (list !! 2)
+ 
 evalActionInfo :: Handle -> Maybe String -> IO (Bool)
 evalActionInfo hdl Nothing = do
+  putStrLn "failure"
   hPutStrLn hdl "failure"
   return $ False
 evalActionInfo hdl (Just output) = do
+  putStrLn output
   hPutStrLn hdl output
   return $ True
 
@@ -63,6 +69,13 @@ performAction hdl (Info username) = do
 performAction hdl (AutoLogin ip) = do
   logedIn <- autoLogin ip
   evalActionInfo hdl logedIn
+performAction hdl (Logout ip) = do
+  logOut ip
+  return True
+performAction hdl (SaveLogin username ip) = do
+  logIn username ip
+  return True
+  -- evalActionInfo hdl logedOut
 
 
 mainLoop :: Socket -> IO ()
@@ -76,7 +89,7 @@ runConn (sock, sockAddr) = do
   -- putStrLn $ show sockAddr
   hdl <- socketToHandle sock ReadWriteMode
   hSetBuffering hdl NoBuffering
-  let (ip, port) = strSplit ":" sockAddr
+  let (ip, port) = strSplit ":" $ show sockAddr
 
   fix $ \loop -> do
     input <- hGetLine hdl

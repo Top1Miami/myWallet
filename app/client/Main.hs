@@ -15,22 +15,26 @@ import System.Environment
 import System.Directory
 -- availableWallets :: [String]
 -- availableWallets = ["dollar", "euro", "ruble", "bitcoin"]
-getUpperButtons :: Window -> Window -> Window -> IO(HBox)
-getUpperButtons startWindow prevWindow window = do
+getUpperButtons :: Window -> Window -> Window -> Handle -> Bool -> IO(HBox)
+getUpperButtons startWindow prevWindow window hdl checkRem = do
   btnExit <- buttonNewWithLabel "Exit"
   btnExit `on` buttonActivated $ do
-    checkExist <- doesFileExist "login.txt"
-    liftIO $ when (checkExist) $ do
-      removeFile "login.txt"
     widgetHideAll window
     widgetShowAll startWindow
   btnBack <- buttonNewWithLabel "Back"
   btnBack `on` buttonActivated $ do
     widgetHideAll window
     widgetShowAll prevWindow
+  btnRem <- buttonNewWithLabel "Log Out"
+  btnRem `on` buttonActivated $ do
+    hPutStrLn hdl "logout"
+    widgetHideAll window
+    widgetShowAll startWindow
+  when (not checkRem) $ do set btnRem [ widgetVisible := False ]
   hbox <- hBoxNew False 5
   boxPackStart hbox btnExit PackNatural 0
   boxPackStart hbox btnBack PackNatural 0
+  boxPackStart hbox btnRem PackNatural 0
   return hbox
 
 getFormatedWindow :: Handle -> IO ((Window, VBox))
@@ -51,11 +55,11 @@ getFormatedWindow hdl = do
   containerAdd window vbAll
   return (window, vbAll)
 
-createTransferWindow :: Handle -> Window -> Window -> String -> String -> IO (Window)
-createTransferWindow hdl startWindow prevWindow username info = do
+createTransferWindow :: Handle -> Window -> Window -> String -> String -> Bool -> IO (Window)
+createTransferWindow hdl startWindow prevWindow username info checkRem = do
   (window, vbAll) <- getFormatedWindow hdl
 
-  hbox <- getUpperButtons startWindow prevWindow window
+  hbox <- getUpperButtons startWindow prevWindow window hdl checkRem
   boxPackStart vbAll hbox PackNatural 0
   labelName <- labelNewWithMnemonic "username"
   entName <- entryNew
@@ -99,11 +103,11 @@ createTransferWindow hdl startWindow prevWindow username info = do
    
   return window
 
-createTransferInsideWindow :: Handle -> Window -> Window -> String -> String -> IO (Window)
-createTransferInsideWindow hdl startWindow prevWindow username info = do
+createTransferInsideWindow :: Handle -> Window -> Window -> String -> String -> Bool -> IO (Window)
+createTransferInsideWindow hdl startWindow prevWindow username info checkRem = do
   (window, vbAll) <- getFormatedWindow hdl
 
-  hbox <- getUpperButtons startWindow prevWindow window
+  hbox <- getUpperButtons startWindow prevWindow window hdl checkRem
   boxPackStart vbAll hbox PackNatural 0
   wallType <- comboBoxNewText
   sequence $ map (comboBoxAppendText wallType . pack) ["dollar", "euro", "ruble", "bitcoin"]
@@ -136,15 +140,15 @@ createTransferInsideWindow hdl startWindow prevWindow username info = do
 
 
 
-createButtonWindow :: Handle -> Window -> Window -> String -> String -> IO (Window)
-createButtonWindow hdl startWindow prevWindow username info = do
+createButtonWindow :: Handle -> Window -> Window -> String -> String -> Bool -> IO (Window)
+createButtonWindow hdl startWindow prevWindow username info checkRem = do
   (window, vbAll) <- getFormatedWindow hdl
-  hbox <- getUpperButtons startWindow prevWindow window
+  hbox <- getUpperButtons startWindow prevWindow window hdl checkRem
   boxPackStart vbAll hbox PackNatural 0
   labelInfo <- labelNewWithMnemonic $ username ++ " has " ++ info
   btnTransfer <- buttonNewWithLabel "transfer to other person"
   btnTransfer `on` buttonActivated $ do
-    transferWindow <- createTransferWindow hdl startWindow window username info
+    transferWindow <- createTransferWindow hdl startWindow window username info checkRem
     widgetHideAll window
     widgetShowAll transferWindow
   btnChange <- buttonNewWithLabel "to your wallet"
@@ -154,32 +158,34 @@ createButtonWindow hdl startWindow prevWindow username info = do
   return window
 
 
-createLoginWindow :: Handle -> Window -> String -> String ->IO (Window)
-createLoginWindow  hdl startWindow username info = do
+createLoginWindow :: Handle -> Window -> String -> String -> Bool -> IO (Window)
+createLoginWindow  hdl startWindow username info checkRem = do
   (window, vbAll)<- getFormatedWindow hdl
   window `on` mapEvent $ do 
-
     (x,y) <- liftIO $ windowGetDefaultSize window
     liftIO $ putStrLn $ (show x) ++ " " ++ (show y)
     return False
   btnExit <- buttonNewWithLabel "Exit"
   btnExit `on` buttonActivated $ do
-    checkExist <- doesFileExist "login.txt"
-    liftIO $ when (checkExist) $ do
-      removeFile "login.txt"
     widgetHideAll window
     widgetShowAll startWindow
+  btnRem <- buttonNewWithLabel "Log Out"
+  btnRem `on` buttonActivated $ do
+    hPutStrLn hdl "logout"
+    widgetHideAll window
+    widgetShowAll startWindow  
   hUpperBox <- hBoxNew False 5
   btnRefresh <- buttonNewWithLabel "Refresh"
   btnRefresh `on` buttonActivated $ do
     hPutStrLn hdl $ "info " ++ username
     updatedInfo <- hGetLine hdl
-    redrawnWindow <- createLoginWindow hdl startWindow username updatedInfo
+    redrawnWindow <- createLoginWindow hdl startWindow username updatedInfo checkRem
     widgetHideAll window
     widgetShowAll redrawnWindow
     widgetDestroy window
   boxPackStart hUpperBox btnExit PackNatural 0
   boxPackStart hUpperBox btnRefresh PackNatural 0
+  boxPackStart hUpperBox btnRem PackNatural 0
   boxPackStart vbAll hUpperBox PackNatural 0
   
   vbWallets <- vBoxNew False 5
@@ -203,28 +209,27 @@ createLoginWindow  hdl startWindow username info = do
         info <- hGetLine hdl
         when (info == "success") $ do
           putStrLn "added"
-          btnToAdd <- createButtonFromWallet vbWallets hdl startWindow window username ("0|" ++ (tail $ init (show x)))
+          btnToAdd <- createButtonFromWallet vbWallets hdl startWindow window username checkRem ("0|" ++ (tail $ init (show x)))
           boxPackStart vbWallets btnToAdd PackGrow 0
           widgetShow btnToAdd
-  res <- sequence $ map (createButtonFromWallet vbWallets hdl startWindow window username) (words info)
+  when (info /= "NotFound") $ do void $ sequence $ map (createButtonFromWallet vbWallets hdl startWindow window username checkRem) (words info)
   
   widgetShowAll vbWallets
   boxPackStart vbAddWallet wallType PackGrow 0
   boxPackStart vbAddWallet btnCreate PackGrow 0
 
-
   return window
   
   where
-    createButtonFromWallet :: VBox -> Handle -> Window -> Window -> String -> String ->  IO (Button)
-    createButtonFromWallet vbox hdl startWindow prevWindow username info = do
+    createButtonFromWallet :: VBox -> Handle -> Window -> Window -> String -> Bool -> String -> IO (Button)
+    createButtonFromWallet vbox hdl startWindow prevWindow username checkRem info  = do
       btn <- buttonNewWithLabel info
       let (amount, wallType) = (strSplit "|" info)
       boxPackStart vbox btn PackGrow 0
       btn `on` buttonActivated $ do
         if ((read amount) /= 0) 
           then do  
-            window <- createButtonWindow hdl startWindow prevWindow username info
+            window <- createButtonWindow hdl startWindow prevWindow username info checkRem
             widgetHideAll prevWindow
             widgetShowAll window
           else do
@@ -310,15 +315,18 @@ createStartWindow :: Handle -> IO (Window)
 createStartWindow hdl = do 
   (window, vbAll) <- getFormatedWindow hdl
   window `on` mapEvent $ do 
-    liftIO $ hPutStrLn hdl "autoLogin"
+    liftIO $ hPutStrLn hdl "autologin"
     result <- liftIO $ hGetLine hdl
     liftIO $ when(result /= "failure") $ do
-      nextWindow <- createLoginWindow hdl window info  
+      nameAndInfo <- hGetLine hdl
+      let (name, info) = strSplit " " nameAndInfo
+      nextWindow <- createLoginWindow hdl window name info True
+      widgetHideAll window
+      widgetShowAll nextWindow
     return False
-      
 
-  -- image <- imageNewFromFile "logo.png"
-  -- boxPackStart vbAll image PackGrow 5
+  image <- imageNewFromFile "logo.png"
+  boxPackStart vbAll image PackGrow 5
 
   hbLogin <- hBoxNew False 5
   boxPackStart vbAll hbLogin PackGrow 5
@@ -347,9 +355,10 @@ createStartWindow hdl = do
     info <- hGetLine hdl 
     when (info /= "failure") $ do
       checkRem <- toggleButtonGetActive rem
-      when (checkRem) $ do
-        writeFile "login.txt" (show array)
-      loginWindow <- createLoginWindow hdl window (head array) info
+      when (checkRem == True) $ do
+        username <- entryGetText entName
+        hPutStrLn hdl $ "savelogin " ++ username
+      loginWindow <- createLoginWindow hdl window (head array) info checkRem
       widgetHideAll window
       widgetShowAll loginWindow
 
