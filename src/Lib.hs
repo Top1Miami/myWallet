@@ -254,7 +254,7 @@ autoLogin ip = do
         Nothing -> do
           return $ Nothing
         Just user -> do
-          fmap Just $ (getAllWallets user) >>= (maybe (return "NotFound") (\list -> return $ foldl (\conc arg -> conc ++ (show arg) ++ " ") "" list)) >>= (\inp -> return $ inp ++ (userName user))
+          fmap Just $ (getAllWallets user) >>= (maybe (return "NotFound") (\list -> return $ foldl (\conc arg -> conc ++ (show arg) ++ " ") "" list)) >>= (\inp -> return $ inp ++ " " ++ (userName user))
 
 logOut :: String -> IO ()
 logOut ip = do

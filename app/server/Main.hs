@@ -40,7 +40,7 @@ evalActionInfo hdl Nothing = do
   hPutStrLn hdl "failure"
   return $ False
 evalActionInfo hdl (Just output) = do
-  putStrLn output
+  putStrLn $ "toSend = " ++ output
   hPutStrLn hdl output
   return $ True
 

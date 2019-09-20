@@ -316,14 +316,17 @@ createStartWindow hdl = do
   (window, vbAll) <- getFormatedWindow hdl
   window `on` mapEvent $ do 
     liftIO $ hPutStrLn hdl "autologin"
+    liftIO $ putStrLn "startedWork"
     result <- liftIO $ hGetLine hdl
+    liftIO $ putStrLn "startedWork"
     liftIO $ when(result /= "failure") $ do
-      nameAndInfo <- hGetLine hdl
-      let (name, info) = strSplit " " nameAndInfo
+      -- nameAndInfo <- hGetLine hdl
+      let (info, name) = strSplit " " result
+      putStrLn $ "name = " ++ name ++ " info = " ++ info
       nextWindow <- createLoginWindow hdl window name info True
       widgetHideAll window
       widgetShowAll nextWindow
-    return False
+    return True
 
   image <- imageNewFromFile "logo.png"
   boxPackStart vbAll image PackGrow 5
