@@ -8,16 +8,17 @@ import Control.Monad.Fix (fix)
 import Lib (
     addWallet
   , addUser
-  , transferMoney
+  , transferMoneyById
   , verifyUser
-  , transferWallet
   , depositWallet
   , autoLogin
   , logOut
   , logIn
+  , transferMoneyBetween
+  , getUserHistory
   )
 
-data SqlAction = SaveLogin String String | Logout String | AutoLogin String | Login String String | Register String String String | Info String | Transfer String String String String | Change String String String String | CrWallet String String String | Deposit String String String deriving (Show)
+data SqlAction = GetHistory String | SaveLogin String String | Logout String | AutoLogin String | Login String String | Change String String String String | Register String String String | Info String | Transfer String String String | CrWallet String String String | Deposit String String String deriving (Show)
 
 toSqlAction :: [String] -> SqlAction
 toSqlAction list =
@@ -26,13 +27,14 @@ toSqlAction list =
     "login" -> Login (list !! 1) (list !! 2)
     "register" -> Register (list !! 1) (list !! 2) (list !! 3)
     "createWallet" -> CrWallet (list !! 1) (list !! 2) "0"
-    "transfer" -> Transfer (list !! 1) (list !! 2) (list !! 3) (list !! 4)
-    "change" -> Change (list !! 1) (list !! 2) (list !! 3) (list !! 4) 
+    "transfer" -> Transfer (list !! 1) (list !! 2) (list !! 3)
     "deposit" -> Deposit (list !! 1) (list !! 2) (list !! 3)
     "info" -> Info $ list !! 1
     "autologin" -> AutoLogin $ list !! 1
     "logout" -> Logout $ list !! 1
     "savelogin" -> SaveLogin (list !! 1) (list !! 2)
+    "change" -> Change (list !! 1) (list !! 2) (list !! 3) (list !! 4)
+    "getHistory" -> GetHistory (list !! 1)
  
 evalActionInfo :: Handle -> Maybe String -> IO (Bool)
 evalActionInfo hdl Nothing = do
@@ -52,11 +54,8 @@ performAction hdl login@(Login username password) = do
 performAction hdl (Register username password mail) = do
   added <- addUser username password mail
   return $ maybe False (\x -> True) added
-performAction hdl (Transfer from to walletType toTransfer) = do
-  transferred <- transferMoney from to walletType (read toTransfer)
-  evalActionInfo hdl transferred
-performAction hdl (Change username from to toTransfer) = do
-  transferred <- transferWallet username from to (read toTransfer)
+performAction hdl (Transfer from to toTransfer) = do
+  transferred <- transferMoneyById from to (read toTransfer)
   evalActionInfo hdl transferred
 performAction hdl (CrWallet username walletType amount) = do
   added <- addWallet username walletType (read amount) 
@@ -75,8 +74,12 @@ performAction hdl (Logout ip) = do
 performAction hdl (SaveLogin username ip) = do
   logIn username ip
   return True
-  -- evalActionInfo hdl logedOut
-
+performAction hdl (Change username from to amount) = do
+  changed <- transferMoneyBetween username from to (read amount)
+  evalActionInfo hdl changed
+performAction hdl (GetHistory username) = do
+  info <- getUserHistory username
+  evalActionInfo hdl info
 
 mainLoop :: Socket -> IO ()
 mainLoop sock = do
@@ -98,8 +101,6 @@ runConn (sock, sockAddr) = do
     res <- performAction hdl $ toSqlAction inputSplit
     putStrLn $ show res
     loop
-
-
 
 main :: IO ()
 main = do
