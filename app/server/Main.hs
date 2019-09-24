@@ -15,7 +15,7 @@ import Lib (
   , logOut
   , logIn
   , transferMoneyBetween
-  , getUserHistory
+  , getFixedHistory
   )
 
 data SqlAction = GetHistory String | SaveLogin String String | Logout String | AutoLogin String | Login String String | Change String String String String | Register String String String | Info String | Transfer String String String | CrWallet String String String | Deposit String String String deriving (Show)
@@ -78,7 +78,7 @@ performAction hdl (Change username from to amount) = do
   changed <- transferMoneyBetween username from to (read amount)
   evalActionInfo hdl changed
 performAction hdl (GetHistory username) = do
-  info <- getUserHistory username
+  info <- getFixedHistory username 5
   evalActionInfo hdl info
 
 mainLoop :: Socket -> IO ()

@@ -1,14 +1,11 @@
-DROP TABLE IF EXISTS users;
-DROP TABLE IF EXISTS wallets;
-DROP TABLE IF EXISTS logins;
-
-CREATE TABLE users (
+PRAGMA foreign_keys = ON;
+CREATE TABLE IF NOT EXISTS users (
   username TEXT PRIMARY KEY,
   password TEXT,
   mail TEXT,
   UNIQUE (username)
 );
-CREATE TABLE wallets (
+CREATE TABLE IF NOT EXISTS wallets (
   id INTEGER PRIMARY KEY,
   publicId TEXT,
   keeperName TEXT,
@@ -16,13 +13,13 @@ CREATE TABLE wallets (
   amountM INTEGER,
   FOREIGN KEY (keeperName) REFERENCES users(username)
 );
-CREATE TABLE logins (
+CREATE TABLE IF NOT EXISTS logins (
   id INTEGER PRIMARY KEY,
   keeperName TEXT,
   ip TEXT,
   FOREIGN KEY (keeperName) REFERENCES users(username)
 );
-CREATE TABLE history (
+CREATE TABLE IF NOT EXISTS  history (
   id INTEGER PRIMARY KEY,
   walletFrom INTEGER,
   walletTo INTEGER,

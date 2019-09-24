@@ -9,7 +9,7 @@ module Lib
   , logOut
   , logIn
   , transferMoneyBetween
-  , getUserHistory
+  , getFixedHistory
   ) where
 
 import Control.Applicative
@@ -56,6 +56,8 @@ instance Show Wallet where
                         , "-"
                         , publicId wallet
                         ] 
+instance Show History where
+  show history = description history
 
 instance FromRow History where
   fromRow = History <$> field <*> field <*> field <*> field 
@@ -175,7 +177,7 @@ transferMoneyById fromId toId toTransfer = do
         then
           throw NotEnoughMoneyException
         else do
-          execute conn "INSERT INTO history (walletFrom, walletTo, description) VALUES (?, ?, ?)" (id walletFrom, id walletTo, "transfer from" ++ (publicId walletFrom) ++ " to " ++ (publicId walletTo) ++ " " ++ (show toTransfer))
+          execute conn "INSERT INTO history (walletFrom, walletTo, description) VALUES (?, ?, ?)" (walletId walletFrom, walletId walletTo, "transfer from" ++ (publicId walletFrom) ++ " to " ++ (publicId walletTo) ++ " " ++ (show toTransfer))
           onSuccess conn walletFrom walletTo toTransfer) :: IO (Either TransferException (Maybe String))
   close conn
   case res of
@@ -201,8 +203,8 @@ transferMoneyBetween username from to toTransfer = do
         if (amountM walletFrom < toTransfer)
         then
           throw NotEnoughMoneyException
-        else
-          execute conn "INSERT INTO history (walletFrom, walletTo, description) VALUES (?, ?, ?)" (id walletFrom, id walletTo, "transfer between your wallets: from " ++ (walletType walletFrom) ++ " to " ++ (walletType walletTo) ++ " " ++ (show toTransfer))
+        else do
+          execute conn "INSERT INTO history (walletFrom, walletTo, description) VALUES (?, ?, ?)" (walletId walletFrom, walletId walletTo, "transfer between your wallets: from " ++ (walletType walletFrom) ++ " to " ++ (walletType walletTo) ++ " " ++ (show toTransfer))
           onSuccess conn walletFrom walletTo toTransfer) :: IO (Either TransferException (Maybe String))
   close conn
   case res of
@@ -298,11 +300,44 @@ logIn username ip = do
   close conn
   return res
 
+getAllWalletsByName :: Connection -> String -> IO [Wallet]
+getAllWalletsByName username = do
+  user <- selectUser conn username
+  case user of
+    Nothing -> return Nothing
+    Just x -> do
+      foundAll <$> query conn "SELECT * FROM wallets WHERE keeperName = ?" (Only username) :: IO (Maybe [Wallet])
+
+historyFromWallets :: Connection -> [Wallet] -> IO (Maybe String)  
+historyFromWallets conn listWallets = do
+  Just <$> (foldl (\x y-> x ++ "\n" ++ y) "") <$> (sequence $ map (\l -> do
+          hF <- query conn "SELECT * FROM history WHERE walletFrom = ?" (Only $ walletId l) :: IO [History]
+          hT <- query conn "SELECT * FROM history WHERE walletTo = ?" (Only $ walletId l) :: IO [History]
+          let foldStrH listHistories = foldl (\f s -> (show f) ++ "\n" ++ (show s)) "" listHistories
+          return $ "from : " ++ (foldStrH hF) ++ "\nto : " ++ (foldStrH hT) ++ ";\n"
+          ) listWallets)
+
+getFixedHistory :: String -> Int -> IO (Maybe String)
+getFixedHistory username n = do
+  conn <- open "tools.db"
+  res <- getAllWalletsByName conn username
+    case res of
+      Nothing -> return Nothing
+      Just listWallets ->
+        historyFromWallets conn $ historyFromWallets $ take 5 listWallets
+  close conn
+  return res
+
 getUserHistory :: String -> IO (Maybe String)
 getUserHistory username = do
   conn <- open "tools.db"
-  user <- selectUser conn username
-  case user of
-    Nothing -> NotFound
-    Just x -> do
-      -- select wallets -> select from, select to -> concat
+  res <- getAllWalletsByName conn username
+    case res of
+      Nothing -> return Nothing
+      Just listWallets ->
+        historyFromWallets conn $ historyFromWallets listWallets
+  close conn
+  return res
+
+        
+
