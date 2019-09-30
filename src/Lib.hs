@@ -10,6 +10,7 @@ module Lib
   , logIn
   , transferMoneyBetween
   , getFixedHistory
+  , getUserHistory
   ) where
 
 import Control.Applicative
@@ -40,6 +41,7 @@ data History = History { historyId :: Int
                        , idWalletFrom :: Int
                        , idWalletTo :: Int
                        , description :: String
+                       , operationDate :: UTCTime
                        }
 
 instance Show User where
@@ -60,7 +62,7 @@ instance Show History where
   show history = description history
 
 instance FromRow History where
-  fromRow = History <$> field <*> field <*> field <*> field 
+  fromRow = History <$> field <*> field <*> field <*> field <*> field
 
 instance FromRow User where
   fromRow = User <$> field <*> field <*> field
@@ -77,16 +79,14 @@ getPublicId username walletType = walletType ++ username
 addUser :: String -> String -> String -> IO (Maybe String)
 addUser username password mail = do
   conn <- open "tools.db"
-  res <- withExclusiveTransaction conn $ do
+  (withExclusiveTransaction conn $ do
     maybeUser <- selectUser conn username
     case maybeUser of
       Nothing -> do
         execute conn "INSERT INTO users (username, password, mail) VALUES (?, ?, ?)" (username, password, mail)
         return $ (Just "success")
       Just user -> do
-        return Nothing
-  close conn
-  return res      
+        return Nothing) <* (close conn)    
 
 foundAny :: [a] -> Maybe a
 foundAny [] = Nothing
@@ -112,16 +112,14 @@ verifyUser username pwd needPsw= do
 addWallet :: String -> String -> Int -> IO (Maybe String)
 addWallet username walletType amountM = do
   conn <- open "tools.db"  
-  res <- withExclusiveTransaction conn $ do
+  (withExclusiveTransaction conn $ do
     maybeWallet <- selectWalletByNameType conn username walletType
     case maybeWallet of
       Nothing -> do 
         execute conn "INSERT INTO wallets (publicId, keeperName, walletType, amountM) VALUES (?, ?, ?, ?)" (getPublicId username walletType, username, walletType, amountM)
         return $ Just $ getPublicId username walletType
       Just wallet -> do
-        return Nothing
-  close conn
-  return res
+        return Nothing) <* (close conn)
 
 selectWallet :: Connection -> User -> String -> IO (Maybe Wallet)
 selectWallet conn user walletType = do
@@ -177,7 +175,7 @@ transferMoneyById fromId toId toTransfer = do
         then
           throw NotEnoughMoneyException
         else do
-          execute conn "INSERT INTO history (walletFrom, walletTo, description) VALUES (?, ?, ?)" (walletId walletFrom, walletId walletTo, "transfer from" ++ (publicId walletFrom) ++ " to " ++ (publicId walletTo) ++ " " ++ (show toTransfer))
+          execute conn "INSERT INTO history (walletFrom, walletTo, description) VALUES (?, ?, ?)" (walletId walletFrom, walletId walletTo, "transfer from " ++ (publicId walletFrom) ++ " to " ++ (publicId walletTo) ++ " " ++ (show toTransfer))
           onSuccess conn walletFrom walletTo toTransfer) :: IO (Either TransferException (Maybe String))
   close conn
   case res of
@@ -248,7 +246,7 @@ deleteWallet username walletType = do
 depositWallet :: String -> String -> String -> IO (Bool)
 depositWallet username walletType amount = do
   conn <- open "tools.db"
-  res <- withExclusiveTransaction conn $ do
+  (withExclusiveTransaction conn $ do
     maybeUser <- selectUser conn username
     case maybeUser of
       Nothing -> do 
@@ -256,9 +254,7 @@ depositWallet username walletType amount = do
         return False
       Just user -> do
         execute conn "UPDATE wallets SET amountM = ? WHERE keeperName = ? AND walletType = ?" ((read amount):: Int, userName user, walletType)
-        return True
-  close conn
-  return res
+        return True) <* (close conn)
 
 autoLogin :: String -> IO (Maybe String)
 autoLogin ip = do
@@ -266,18 +262,16 @@ autoLogin ip = do
   putStrLn ip
   login <- query conn "SELECT * FROM logins WHERE ip = ?" (Only ip) :: IO [Login]
   putStrLn "ne run" 
-  case (foundAny login) of
+  (case (foundAny login) of
     Nothing -> do 
-      close conn
       return $ Nothing
     Just x -> do
       userList <- query conn "SELECT * FROM users WHERE username = ?" (Only $ loginKeeperName x) :: IO [User]
-      close conn
       case (foundAny userList) of
         Nothing -> do
           return $ Nothing
         Just user -> do
-          fmap Just $ (getAllWallets user) >>= (maybe (return "NotFound") (\list -> return $ foldl (\conc arg -> conc ++ (show arg) ++ " ") "" list)) >>= (\inp -> return $ inp ++ " " ++ (userName user))
+          fmap Just $ (getAllWallets user) >>= (maybe (return "NotFound") (\list -> return $ foldl (\conc arg -> conc ++ (show arg) ++ " ") "" list)) >>= (\inp -> return $ inp ++ " " ++ (userName user))) <* (close conn)
 
 logOut :: String -> IO ()
 logOut ip = do
@@ -289,55 +283,55 @@ logOut ip = do
 logIn :: String -> String -> IO (Maybe String)
 logIn username ip = do
   conn <- open "tools.db"
-  res <- withExclusiveTransaction conn $ do
+  (withExclusiveTransaction conn $ do
     userList <- query conn "SELECT * FROM users WHERE userName = ?" (Only username) :: IO [User]
     case (foundAny userList) of
       Nothing -> do
         return Nothing
       Just user -> do
         execute conn "INSERT INTO logins (keeperName, ip) VALUES (?, ?)" (userName user , ip)
-        return $ Just "success"
-  close conn
-  return res
+        return $ Just "success") <* (close conn)
 
-getAllWalletsByName :: Connection -> String -> IO [Wallet]
-getAllWalletsByName username = do
+getAllWalletsByName :: Connection -> String -> IO (Maybe [Wallet])
+getAllWalletsByName conn username = do
   user <- selectUser conn username
   case user of
     Nothing -> return Nothing
     Just x -> do
       foundAll <$> query conn "SELECT * FROM wallets WHERE keeperName = ?" (Only username) :: IO (Maybe [Wallet])
 
-historyFromWallets :: Connection -> [Wallet] -> IO (Maybe String)  
+historyFromWallets :: Connection -> [Wallet] -> IO (Maybe [String])  
 historyFromWallets conn listWallets = do
-  Just <$> (foldl (\x y-> x ++ "\n" ++ y) "") <$> (sequence $ map (\l -> do
-          hF <- query conn "SELECT * FROM history WHERE walletFrom = ?" (Only $ walletId l) :: IO [History]
-          hT <- query conn "SELECT * FROM history WHERE walletTo = ?" (Only $ walletId l) :: IO [History]
-          let foldStrH listHistories = foldl (\f s -> (show f) ++ "\n" ++ (show s)) "" listHistories
-          return $ "from : " ++ (foldStrH hF) ++ "\nto : " ++ (foldStrH hT) ++ ";\n"
-          ) listWallets)
+  Just <$> ((++ [";"]) . concat) <$> (sequence $ map (\wallet -> do
+    hF <- query conn "SELECT * FROM history WHERE walletFrom = ? OR walletTo = ? ORDER BY sqltime DESC" (walletId wallet, walletId wallet) :: IO [History]    
+    return $ ["<", (publicId wallet)] ++ (map (show) hF) ++ [">"]
+    ) listWallets)
 
-getFixedHistory :: String -> Int -> IO (Maybe String)
-getFixedHistory username n = do
+historyByTime :: Connection -> Wallet -> IO (Maybe String)
+historyByTime conn wallet = do
+  hF <- query conn "SELECT * FROM history WHERE walletFrom = ? OR walletTo = ? ORDER BY sqltime DESC" (walletId wallet, walletId wallet) :: IO [History]    
+  let headListHistories = head hF
+  let tailListHistories = tail hF
+  let foldStrH listHistories = foldl (\f s -> f ++ "|" ++ (show s)) (show headListHistories) tailListHistories  
+  return $ Just $ "<" ++ (foldStrH hF) ++ ">"
+
+getFixedHistory :: String -> String -> IO (Maybe String)
+getFixedHistory username walletId = do
   conn <- open "tools.db"
-  res <- getAllWalletsByName conn username
-    case res of
-      Nothing -> return Nothing
-      Just listWallets ->
-        historyFromWallets conn $ historyFromWallets $ take 5 listWallets
-  close conn
-  return res
+  maybeWallet <- selectWalletByPublicId conn walletId
+  (case maybeWallet of
+    Nothing -> return Nothing
+    Just wallet ->
+      historyByTime conn wallet) <* (close conn)
 
-getUserHistory :: String -> IO (Maybe String)
+getUserHistory :: String -> IO (Maybe [String])
 getUserHistory username = do
   conn <- open "tools.db"
-  res <- getAllWalletsByName conn username
-    case res of
-      Nothing -> return Nothing
-      Just listWallets ->
-        historyFromWallets conn $ historyFromWallets listWallets
-  close conn
-  return res
+  wallets <- getAllWalletsByName conn username
+  (case wallets of
+    Nothing -> return Nothing
+    Just listWallets ->
+      historyFromWallets conn listWallets) <* (close conn)
 
         
 

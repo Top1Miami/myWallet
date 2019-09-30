@@ -19,11 +19,12 @@ CREATE TABLE IF NOT EXISTS logins (
   ip TEXT,
   FOREIGN KEY (keeperName) REFERENCES users(username)
 );
-CREATE TABLE IF NOT EXISTS  history (
+CREATE TABLE IF NOT EXISTS history (
   id INTEGER PRIMARY KEY,
   walletFrom INTEGER,
   walletTo INTEGER,
   description TEXT,
+  sqltime TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
   FOREIGN KEY (walletFrom) REFERENCES wallets(id),
   FOREIGN KEY (walletTo) REFERENCES wallets(id)
 );
