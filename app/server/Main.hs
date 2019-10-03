@@ -1,8 +1,11 @@
 module Main where
 import Network.Socket
+import Data.Bits (xor)
+import Data.Char (ord, chr)
 import Control.Concurrent
 import System.IO
 import System.Environment
+import System.Random (randomRIO)
 import Data.Strings
 import Control.Lens
 import Control.Exception
@@ -117,6 +120,69 @@ mainLoop sock = do
   forkIO (runConn conn)
   mainLoop sock
 
+data IndexExceptionOnInitialization = IndexExceptionOnInitialization Int Int deriving (Show)
+
+instance Exception IndexExceptionOnInitialization where
+
+initializeBlock :: [Int] -> [Int]
+initializeBlock key = shufle 0 0 start key
+  where
+    start = [0..255]
+    shufle :: Int -> Int -> [Int] -> [Int] -> [Int]
+    shufle _ 256 list _ = list 
+    shufle base i list key = shufle j (i + 1) (subList & element j .~ swap) key 
+      where
+        j = mod (base + (list -!!- i) + (key -!!- (mod i $ length key))) 256 
+        swap = list -!!- i
+        subList = (list & element i .~ (list -!!- j))
+
+encrypt :: [Int] -> String -> String
+encrypt key msg = Prelude.map chr $ xorEval 0 0 (initializeBlock key) msg
+  where
+    xorEval :: Int -> Int -> [Int] -> String -> [Int]
+    xorEval _ _ _ [] = [] 
+    xorEval i j sBlock (m:msg) = (xor (ord m :: Int) (finBlock -!!- t)) : (xorEval newI newJ finBlock msg)
+      where
+        newI = mod (i + 1) 256
+        newJ = mod (j + (sBlock -!!- i)) 256 
+        swap = sBlock -!!- i
+        subBlock = sBlock & element i .~ (sBlock -!!- j)
+        finBlock = subBlock & element j .~ swap
+        t = mod ((finBlock -!!- newI) + (finBlock -!!- newJ)) 256
+
+decrypt :: [Int] -> String -> String
+decrypt = encrypt
+
+(-!!-) :: [a] -> Int -> a
+(-!!-) list number = case list ^? element number of
+  Nothing -> throw (IndexExceptionOnInitialization number (length list))
+  Just x -> x
+
+runDiffieHellman :: Handle -> Int -> IO ([Int])
+runDiffieHellman hdl k = do
+  putStrLn "in runDiffieHellman"
+  a <- randomRIO (92233720368547758, 9223372036854775807) :: IO (Int)
+  putStrLn $ show a
+  let aSend = mod ((3681993451487) ^ a) 8429605667295912267 :: Int
+  putStrLn $ show aSend
+  hPutStrLn hdl $ show aSend
+  b <- hGetLine hdl
+  putStrLn $ "aSend = " ++ (show aSend) ++ " b Receieved = " ++ b 
+  let key = mod ((read b :: Int) ^ a) 8429605667295912267 :: Int
+  putStrLn $ "key = " ++ (show key)
+  let roundOne = take k $ separateToBit key
+  putStrLn $ show roundOne
+  if(length roundOne < k)
+    then do
+      keyAdd <- runDiffieHellman hdl (k - (length roundOne))
+      return $ roundOne ++ keyAdd
+    else
+      return roundOne
+  where
+    separateToBit :: Int -> [Int]
+    separateToBit 0 = []
+    separateToBit num = (mod num 256) : (separateToBit (num `div` (256::Int)))
+
 runConn :: (Socket, SockAddr) -> IO ()
 runConn (sock, sockAddr) = do
   -- putStrLn $ show sockAddr
@@ -124,7 +190,12 @@ runConn (sock, sockAddr) = do
   hSetBuffering hdl NoBuffering
   let (ip, port) = strSplit ":" $ show sockAddr
 
+  putStrLn "Started runDiffieHellman protocol "
+  key <- runDiffieHellman hdl 7
+  putStrLn "Key is :"
+  putStrLn $ show key
   fix $ \loop -> do
+    putStrLn "called"
     input <- hGetLine hdl
     putStrLn input
     let inputSplit = words input

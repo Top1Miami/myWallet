@@ -9,12 +9,13 @@ import Control.Monad.IO.Class
 import Data.IORef
 import Data.Typeable
 import Data.Strings
-import Data.List (intercalate)
-import Data.Text hiding (head, tail, map, foldl, words, init, tail, any, reverse, intercalate)
+import Data.List (intercalate, take, length)
+import Data.Text hiding (head, tail, map, foldl, words, init, tail, any, reverse, intercalate, take, length)
 import System.IO
 import Graphics.UI.Gtk hiding (Action, backspace, Socket)
 import System.Environment
 import System.Directory
+import System.Random (randomRIO)
 
 getUpperButtons :: Window -> Window -> Window -> Handle -> Bool -> IO(HBox)
 getUpperButtons startWindow prevWindow window hdl checkRem = do
@@ -420,6 +421,36 @@ createStartWindow hdl = do
   boxPackStart vbAll btnRegister PackNatural 5
   return $ window
 
+runDiffieHellman :: Handle -> Int -> IO ([Int])
+runDiffieHellman hdl k = do
+  putStrLn "in runDiffieHellman"
+  a <- randomRIO (92233720368547758, 9223372036854775807) :: IO (Int)
+  putStrLn $ show a
+  let aSend = mod ((3681993451487) ^ a) 8429605667295912267 :: Int
+  putStrLn $ show aSend
+  hPutStrLn hdl $ show aSend
+  b <- hGetLine hdl
+  putStrLn $ "aSend = " ++ (show aSend) ++ " b Receieved = " ++ b 
+  let key = mod ((read b :: Int) ^ a) 8429605667295912267 :: Int
+  putStrLn $ "key = " ++ (show key)
+  let roundOne = take k $ separateToBit key
+  putStrLn $ show roundOne
+  if(length roundOne < k)
+    then do
+      keyAdd <- runDiffieHellman hdl (k - (length roundOne))
+      return $ roundOne ++ keyAdd
+    else
+      return roundOne
+  where
+    separateToBit :: Int -> [Int]
+    separateToBit 0 = []
+    separateToBit num = (mod num (256::Int)) : (separateToBit (num `div` (256::Int)))
+
+-- a 922337203685
+-- b 912312543512
+-- asend 5954308256915284831
+-- bsend 2944596025013474380
+
 main :: IO ()
 main = do
   arguments <- getArgs
@@ -436,6 +467,11 @@ main = do
 
   hdl <- socketToHandle sock ReadWriteMode
   hSetBuffering hdl NoBuffering
+
+  putStrLn "Started runDiffieHellman protocol "
+  key <- runDiffieHellman hdl 7
+  putStrLn "Key is :"
+  putStrLn $ show key
   
   void initGUI
 
