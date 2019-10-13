@@ -1,12 +1,13 @@
 module Main where
 import Network.Socket
-import Data.Bits (xor)
+import Data.Bits (xor, (.&.), shift)
 import Data.Char (ord, chr)
+import Data.ByteString.UTF8 (fromString, toString)
 import Control.Concurrent
 import System.IO
 import System.Environment
 import System.Random (randomRIO)
-import Data.Strings
+import Data.Strings hiding (fromString, toString)
 import Control.Lens
 import Control.Exception
 import Control.Monad.Fix (fix)
@@ -39,7 +40,7 @@ toSqlAction list ip =
     "transfer" -> Transfer (list -!!- 1) (list -!!- 2) (list -!!- 3) (list -!!- 4)
     "deposit" -> Deposit (list -!!- 1) (list -!!- 2) (list -!!- 3)
     "info" -> Info $ list -!!- 1
-    "autologin" -> AutoLogin $ ip
+    "autologin" -> AutoLogin ip
     "logout" -> Logout ip
     "savelogin" -> SaveLogin (list -!!- 1) ip
     "change" -> Change (list -!!- 1) (list -!!- 2) (list -!!- 3) (list -!!- 4)
@@ -52,67 +53,67 @@ toSqlAction list ip =
       Nothing -> throw ActionConvertionException
       Just x -> x
 
-evalActionInfo :: Handle -> Maybe String -> IO (Bool)
-evalActionInfo hdl Nothing = do
+evalActionInfo :: Handle -> [Int] -> Maybe String -> IO (Bool)
+evalActionInfo hdl key Nothing = do
   putStrLn "failure"
-  hPutStrLn hdl "failure"
+  hPutStrLn hdl $ encrypt key "failure"
   return $ False
-evalActionInfo hdl (Just output) = do
+evalActionInfo hdl key (Just output) = do
   putStrLn $ "toSend = " ++ output
-  hPutStrLn hdl output
+  hPutStrLn hdl $ encrypt key output
   return $ True
 
-performAction :: Handle -> SqlAction -> IO (Bool)
-performAction hdl login@(Login username password) = do
+performAction :: Handle -> [Int] ->  SqlAction -> IO (Bool)
+performAction hdl key login@(Login username password) = do
   putStrLn $ show login
   verified <- verifyUser username password False
-  evalActionInfo hdl verified
-performAction hdl (Register username password mail) = do
+  evalActionInfo hdl key verified
+performAction hdl key (Register username password mail) = do
   added <- addUser username password mail
-  return $ maybe False (\x -> True) added
-performAction hdl (Transfer username from to toTransfer) = do
+  return $ maybe False (\x -> True) added -- leave as it is?
+performAction hdl key (Transfer username from to toTransfer) = do
   transferred <- transferMoneyById from to (read toTransfer)
-  evalActionInfo hdl transferred
-performAction hdl (CrWallet username walletType amount) = do
+  evalActionInfo hdl key transferred
+performAction hdl key (CrWallet username walletType amount) = do
   added <- addWallet username walletType (read amount) 
-  evalActionInfo hdl added
-performAction hdl (Deposit username walletType amount) = do
-  depositWallet username walletType (read amount)
-performAction hdl (Info username) = do
+  evalActionInfo hdl key added
+performAction hdl key (Deposit username walletType amount) = do
+  depositWallet username walletType amount
+performAction hdl key (Info username) = do
   verified <- verifyUser username "trash" True
-  evalActionInfo hdl verified
-performAction hdl (AutoLogin ip) = do
+  evalActionInfo hdl key verified
+performAction hdl key (AutoLogin ip) = do
   logedIn <- autoLogin ip
-  evalActionInfo hdl logedIn
-performAction hdl (Logout ip) = do
+  evalActionInfo hdl key logedIn
+performAction hdl key (Logout ip) = do
   logOut ip
   return True
-performAction hdl (SaveLogin username ip) = do
+performAction hdl key (SaveLogin username ip) = do
   logIn username ip
   return True
-performAction hdl (Change username from to amount) = do
+performAction hdl key (Change username from to amount) = do
   changed <- transferMoneyBetween username from to (read amount)
-  evalActionInfo hdl changed
-performAction hdl (GetHistory username walletId) = do
+  evalActionInfo hdl key changed
+performAction hdl key (GetHistory username walletId) = do
   info <- getFixedHistory username walletId
-  evalActionInfo hdl info
-performAction hdl (GetFullHistory username) = do
+  evalActionInfo hdl key info
+performAction hdl key (GetFullHistory username) = do
   info <- getUserHistory username
-  checkIfSend hdl info
+  checkIfSend hdl key info
   where
-    checkIfSend :: Handle -> Maybe [String] -> IO (Bool)
-    checkIfSend hdl Nothing = do
+    checkIfSend :: Handle -> [Int] -> Maybe [String] -> IO (Bool)
+    checkIfSend hdl _ Nothing = do
       putStrLn "failure"
       return False
-    checkIfSend hdl (Just list) = do
-      sendAll hdl list
+    checkIfSend hdl key (Just list) = do
+      sendAll hdl key list
       return True
 
-    sendAll :: Handle -> [String] -> IO () 
-    sendAll hdl (x:rest) = do
-      hPutStrLn hdl x
-      sendAll hdl rest
-    sendAll hdl [] = return ()
+    sendAll :: Handle -> [Int] -> [String] -> IO () 
+    sendAll hdl key (x:rest) = do
+      hPutStrLn hdl $ encrypt key x
+      sendAll hdl key rest
+    sendAll _ _ [] = return ()
       
 mainLoop :: Socket -> IO ()
 mainLoop sock = do
@@ -158,20 +159,29 @@ decrypt = encrypt
   Nothing -> throw (IndexExceptionOnInitialization number (length list))
   Just x -> x
 
+bitPow :: Integer -> Integer -> Integer-> Integer
+bitPow _ 0 _ = 1
+bitPow n power byMod = if(power .&. 1 == 1)
+  then
+    ((n *) $! (bitPow n (power - 1) byMod)) `mod` byMod
+  else
+    let b = bitPow n (shift power $ -1) byMod in
+      (b * b) `mod` byMod
+
 runDiffieHellman :: Handle -> Int -> IO ([Int])
 runDiffieHellman hdl k = do
   putStrLn "in runDiffieHellman"
-  a <- randomRIO (92233720368547758, 9223372036854775807) :: IO (Int)
+  a <- randomRIO (92233720368547758, 9223372036854775807) :: IO (Integer)
   putStrLn $ show a
-  let aSend = mod ((3681993451487) ^ a) 8429605667295912267 :: Int
+  let aSend = fromIntegral (bitPow 3681993451487 a 8429605667295912267) :: Int -- convert
+  let aInteger = (bitPow 3681993451487 a 8429605667295912267)
   putStrLn $ show aSend
   hPutStrLn hdl $ show aSend
   b <- hGetLine hdl
   putStrLn $ "aSend = " ++ (show aSend) ++ " b Receieved = " ++ b 
-  let key = mod ((read b :: Int) ^ a) 8429605667295912267 :: Int
-  putStrLn $ "key = " ++ (show key)
+  let key = fromIntegral (bitPow (read b :: Integer) a 8429605667295912267) :: Int  -- convert
+  let keyInteger = (bitPow (read b :: Integer) a 8429605667295912267)
   let roundOne = take k $ separateToBit key
-  putStrLn $ show roundOne
   if(length roundOne < k)
     then do
       keyAdd <- runDiffieHellman hdl (k - (length roundOne))
@@ -185,21 +195,20 @@ runDiffieHellman hdl k = do
 
 runConn :: (Socket, SockAddr) -> IO ()
 runConn (sock, sockAddr) = do
-  -- putStrLn $ show sockAddr
   hdl <- socketToHandle sock ReadWriteMode
   hSetBuffering hdl NoBuffering
   let (ip, port) = strSplit ":" $ show sockAddr
 
-  putStrLn "Started runDiffieHellman protocol "
   key <- runDiffieHellman hdl 7
   putStrLn "Key is :"
   putStrLn $ show key
   fix $ \loop -> do
     putStrLn "called"
-    input <- hGetLine hdl
-    putStrLn input
+    input <- (decrypt key) <$> hGetLine hdl
+    putStrLn "try"
+    -- putStrLn $ toString $ fromString input
     let inputSplit = words input
-    res <- (try $ performAction hdl $ toSqlAction inputSplit ip) :: IO (Either ActionConvertionException Bool)
+    res <- (try $ performAction hdl key $ toSqlAction inputSplit ip) :: IO (Either ActionConvertionException Bool)
     case res of
       Left ex -> putStrLn $ show ex
       Right x -> putStrLn $ show x

@@ -1,9 +1,2 @@
-0!!) create walletId like value + hash(username + inverted username)
-1) Keep hisotry
-1-1) Get history in word file
-2) Read about implementation of cryptonite or PGP
 3) Hide password
-4) Gui Align
-5) Refactor
-6) Admin interface
-7) test concurrent user's work
+4) Add convertion

@@ -29,7 +29,7 @@ data Wallet = Wallet { walletId :: Int
                      , publicId :: String
                      , keeperName :: String
                      , walletType :: String
-                     , amountM :: Int 
+                     , amountM :: Double 
                      }
 
 data Login = Login { loginId :: Int
@@ -157,7 +157,7 @@ data TransferException = WalletNotFoundException | NotEnoughMoneyException deriv
 
 instance Exception TransferException where
 
-transferMoneyById :: String -> String -> Int -> IO (Maybe String)
+transferMoneyById :: String -> String -> Double -> IO (Maybe String)
 transferMoneyById fromId toId toTransfer = do
   conn <- open "tools.db"
   res <- (try $ withExclusiveTransaction conn $ do
@@ -184,7 +184,7 @@ transferMoneyById fromId toId toTransfer = do
       return $ Nothing
     Right succ -> return succ
 
-transferMoneyBetween :: String -> String -> String -> Int -> IO (Maybe String)
+transferMoneyBetween :: String -> String -> String -> Double -> IO (Maybe String)
 transferMoneyBetween username from to toTransfer = do
   conn <- open "tools.db"
   res <- (try $ withExclusiveTransaction conn $ do
@@ -211,10 +211,19 @@ transferMoneyBetween username from to toTransfer = do
       return $ Nothing
     Right succ -> return succ
 
-onSuccess :: Connection -> Wallet -> Wallet -> Int -> IO (Maybe String)
+fromStringMy :: String -> Double
+fromStringMy name = case name of 
+  "dollar" -> 1.0
+  "euro" -> 1.18
+  "ruble" -> 0.015
+  "bitcoin" -> 4237.88
+exchange :: String -> String -> Double -> Double
+exchange typeFrom typeTo money = (fromStringMy typeFrom / fromStringMy typeTo) * money
+
+onSuccess :: Connection -> Wallet -> Wallet -> Double -> IO (Maybe String)
 onSuccess conn walletFrom walletTo money = do  
-  execute conn "UPDATE wallets SET amountM = ? WHERE id = ?" (amountM walletFrom - money, walletId walletFrom)
-  execute conn "UPDATE wallets SET amountM = ? WHERE id = ?" (amountM walletTo + money, walletId walletTo)
+  execute conn "UPDATE wallets SET amountM = ? WHERE id = ?" (amountM walletFrom - money, walletId walletFrom) 
+  execute conn "UPDATE wallets SET amountM = ? WHERE id = ?" (exchange (walletType walletFrom) (walletType walletTo) $ amountM walletFrom + money, walletId walletTo)
   maybeFrom <- selectWalletById conn (walletId walletFrom)
   maybeTo <- selectWalletById conn (walletId walletTo)
   return $ getWalletInfo maybeFrom maybeTo    
@@ -253,7 +262,7 @@ depositWallet username walletType amount = do
         putStrLn "user not found, operation failed"
         return False
       Just user -> do
-        execute conn "UPDATE wallets SET amountM = ? WHERE keeperName = ? AND walletType = ?" ((read amount):: Int, userName user, walletType)
+        execute conn "UPDATE wallets SET amountM = ? WHERE keeperName = ? AND walletType = ?" ((read amount):: Double, userName user, walletType)
         return True) <* (close conn)
 
 autoLogin :: String -> IO (Maybe String)
@@ -277,7 +286,9 @@ logOut :: String -> IO ()
 logOut ip = do
   conn <- open "tools.db"
   withExclusiveTransaction conn $ do
+    putStrLn "started"
     execute conn "DELETE FROM logins WHERE ip = ?" (Only ip)
+    putStrLn "deleted"
   close conn
 
 logIn :: String -> String -> IO (Maybe String)
@@ -310,9 +321,10 @@ historyFromWallets conn listWallets = do
 historyByTime :: Connection -> Wallet -> IO (Maybe String)
 historyByTime conn wallet = do
   hF <- query conn "SELECT * FROM history WHERE walletFrom = ? OR walletTo = ? ORDER BY sqltime DESC" (walletId wallet, walletId wallet) :: IO [History]    
-  let headListHistories = head hF
-  let tailListHistories = tail hF
-  let foldStrH listHistories = foldl (\f s -> f ++ "|" ++ (show s)) (show headListHistories) tailListHistories  
+  -- let headListHistories = head hF
+  -- let tailListHistories = tail hF
+  let foldStrH listHistories = foldl (\f s -> f ++ "|" ++ (show s)) "" listHistories  
+  putStrLn $ foldStrH hF
   return $ Just $ "<" ++ (foldStrH hF) ++ ">"
 
 getFixedHistory :: String -> String -> IO (Maybe String)

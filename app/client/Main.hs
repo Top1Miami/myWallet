@@ -2,6 +2,8 @@
 module Main where
 
 import Data.Time
+import Data.Bits (xor, (.&.), shift)
+import Data.Char (ord, chr)
 import Network.Socket
 import Control.Monad
 import Control.Concurrent
@@ -16,6 +18,8 @@ import Graphics.UI.Gtk hiding (Action, backspace, Socket)
 import System.Environment
 import System.Directory
 import System.Random (randomRIO)
+import Control.Exception
+import Control.Lens ((.~), (^?), element,(&))
 
 getUpperButtons :: Window -> Window -> Window -> Handle -> Bool -> IO(HBox)
 getUpperButtons startWindow prevWindow window hdl checkRem = do
@@ -58,8 +62,8 @@ getFormatedWindow hdl = do
   containerAdd window vbAll
   return (window, vbAll)
 
-createTransferWindow :: Handle -> Window -> Window -> Window -> String -> String -> Bool -> IO (Window)
-createTransferWindow hdl startWindow prevWindow loginWindow username info checkRem = do
+createTransferWindow :: Handle -> [Int] -> Window -> Window -> Window -> String -> String -> Bool -> IO (Window)
+createTransferWindow hdl key startWindow prevWindow loginWindow username info checkRem = do
   (window, vbAll) <- getFormatedWindow hdl
 
   hbox <- getUpperButtons startWindow prevWindow window hdl checkRem
@@ -81,7 +85,7 @@ createTransferWindow hdl startWindow prevWindow loginWindow username info checkR
     entAmountStr <- entryGetText entAmount
     entNameStr <- entryGetText entName
     let checkForUnused = foldl (\x c -> x && (any (c == ) "abcdefghikjlmnopqrstuvwxyzABCDEFGHIKJLMNOPQRSTXYZ1234567890")) True entNameStr
-    let checkNumber = foldl (\x c -> x && (any (c == ) "1234567890")) True entAmountStr
+    let checkNumber = foldl (\x c -> x && (any (c == ) "1234567890.")) True entAmountStr
     if(not checkNumber)
       then do
         dialogW <- messageDialogNew (Just window) [DialogDestroyWithParent] MessageWarning ButtonsNone "Use only numbers"  
@@ -94,8 +98,8 @@ createTransferWindow hdl startWindow prevWindow loginWindow username info checkR
           else do
             let (walletType, searchId) = strSplit "-" other
             putStrLn $ "transfer " ++ username ++ " " ++ searchId ++ " " ++ entNameStr ++ " " ++ entAmountStr
-            hPutStrLn hdl $ "transfer " ++ username ++ " " ++ searchId ++ " " ++ entNameStr ++ " " ++ entAmountStr
-            output <- hGetLine hdl
+            hPutStrLn hdl $ encrypt key $ "transfer " ++ username ++ " " ++ searchId ++ " " ++ entNameStr ++ " " ++ entAmountStr
+            output <- (decrypt key) <$> hGetLine hdl
             when (output == "failure") $ do
               dialogW <- messageDialogNew (Just window) [DialogDestroyWithParent] MessageWarning ButtonsNone "Something went wrong and opertaion failed. Try again later."  
               widgetShow dialogW
@@ -106,16 +110,16 @@ createTransferWindow hdl startWindow prevWindow loginWindow username info checkR
             widgetDestroy prevWindow
   return window
 
-createTransferInsideWindow :: Handle -> Window -> Window -> Window -> String -> String -> Bool -> IO (Window)
-createTransferInsideWindow hdl startWindow prevWindow loginWindow username info checkRem = do
+createTransferInsideWindow :: Handle -> [Int] -> Window -> Window -> Window -> String -> String -> Bool -> IO (Window)
+createTransferInsideWindow hdl key startWindow prevWindow loginWindow username info checkRem = do
   (window, vbAll) <- getFormatedWindow hdl
   hbox <- getUpperButtons startWindow prevWindow window hdl checkRem
   boxPackStart vbAll hbox PackNatural 0
   wallType <- comboBoxNewText
   
   window `on` mapEvent $ do 
-    liftIO $ hPutStrLn hdl $ "info " ++ username
-    info <- liftIO $ hGetLine hdl
+    liftIO $ hPutStrLn hdl $ encrypt key $ "info " ++ username
+    info <- liftIO $ (decrypt key) <$> hGetLine hdl
     let typeList = map (\x -> fst $ strSplit "-" $ snd $ strSplit "|" x) $ words info
     liftIO $ sequence $ map (comboBoxAppendText wallType . pack) typeList
     return False
@@ -127,28 +131,34 @@ createTransferInsideWindow hdl startWindow prevWindow loginWindow username info 
   boxPackStart vbAll entAmount PackGrow 0
   boxPackStart vbAll btnTransfer PackGrow 0
   btnTransfer `on` buttonActivated $ do
-    selectedVal <- comboBoxGetActiveText wallType
-    case selectedVal of
-      Nothing -> do
-        dialogW <- messageDialogNew (Just window) [DialogDestroyWithParent] MessageWarning ButtonsNone "Please choose wallet type"  
+    entAmountStr <- entryGetText entAmount
+    let checkNumber = foldl (\x c -> x && (any (c == ) "1234567890.")) True entAmountStr
+    if(not checkNumber)
+      then do
+        dialogW <- messageDialogNew (Just window) [DialogDestroyWithParent] MessageWarning ButtonsNone "Use only numbers"  
         widgetShow dialogW
-      Just wall -> do
-        let (walletType, _) = strSplit "-" $ snd $ strSplit "|" info
-        entAmountStr <- entryGetText entAmount
-        hPutStrLn hdl $ "change " ++ username ++ " " ++ walletType ++ " " ++ (tail $ init (show wall)) ++ " " ++ entAmountStr
-        output <- hGetLine hdl
-        when (output == "failure") $ do
-          dialogW <- messageDialogNew (Just window) [DialogDestroyWithParent] MessageWarning ButtonsNone "Something went wrong and opertaion failed. Try again later."  
-          widgetShow dialogW
-        putStrLn output
-        widgetHideAll window
-        widgetShowAll loginWindow
-        widgetDestroy window
-        widgetDestroy prevWindow
+      else do 
+        selectedVal <- comboBoxGetActiveText wallType
+        case selectedVal of
+          Nothing -> do
+            dialogW <- messageDialogNew (Just window) [DialogDestroyWithParent] MessageWarning ButtonsNone "Please choose wallet type"  
+            widgetShow dialogW
+          Just wall -> do
+            let (walletType, _) = strSplit "-" $ snd $ strSplit "|" info
+            hPutStrLn hdl $ encrypt key $ "change " ++ username ++ " " ++ walletType ++ " " ++ (tail $ init (show wall)) ++ " " ++ entAmountStr
+            output <- (decrypt key) <$> hGetLine hdl
+            when (output == "failure") $ do
+              dialogW <- messageDialogNew (Just window) [DialogDestroyWithParent] MessageWarning ButtonsNone "Something went wrong and opertaion failed. Try again later."  
+              widgetShow dialogW
+            putStrLn output
+            widgetHideAll window
+            widgetShowAll loginWindow
+            widgetDestroy window
+            widgetDestroy prevWindow
   return window
 
-createButtonWindow :: Handle -> Window -> Window -> String -> String -> Bool -> IO (Window)
-createButtonWindow hdl startWindow prevWindow username info checkRem = do
+createButtonWindow :: Handle -> [Int] -> Window -> Window -> String -> String -> Bool -> IO (Window)
+createButtonWindow hdl key startWindow prevWindow username info checkRem = do
   (window, vbAll) <- getFormatedWindow hdl
   hbox <- getUpperButtons startWindow prevWindow window hdl checkRem
   boxPackStart vbAll hbox PackNatural 0
@@ -161,20 +171,23 @@ createButtonWindow hdl startWindow prevWindow username info checkRem = do
   label <- labelNewWithMnemonic ""
   boxPackStart vbH label PackGrow 0    
   window `on` mapEvent $ do 
+    liftIO $ putStrLn "dropped"
     (x,y) <- liftIO $ windowGetDefaultSize window
-    liftIO $ hPutStrLn hdl $ "getHistory " ++ username ++ " " ++ (snd (strSplit "-" info))
-    output <- liftIO $ hGetLine hdl
+    liftIO $ hPutStrLn hdl $ encrypt key $ "getHistory " ++ username ++ " " ++ (snd (strSplit "-" info))
+    liftIO $ putStrLn "dropped"
+    output <- liftIO $ (decrypt key) <$> hGetLine hdl
+    liftIO $ putStrLn "dropped"
     liftIO $ set label [ labelLabel := (intercalate "\n" $ strSplitAll "|" $ tail $ init output) ]
     return False
   labelInfo <- labelNewWithMnemonic $ username ++ " has " ++ info
   btnTransfer <- buttonNewWithLabel "transfer to other person"
   btnTransfer `on` buttonActivated $ do
-    transferWindow <- createTransferWindow hdl startWindow window prevWindow username info checkRem
+    transferWindow <- createTransferWindow hdl key startWindow window prevWindow username info checkRem
     widgetHideAll window
     widgetShowAll transferWindow
   btnChange <- buttonNewWithLabel "to your wallet"
   btnChange `on` buttonActivated $ do
-    transferWindow <- createTransferInsideWindow hdl startWindow window prevWindow username info checkRem
+    transferWindow <- createTransferInsideWindow hdl key startWindow window prevWindow username info checkRem
     widgetHideAll window
     widgetShowAll transferWindow
   boxPackStart vbIO labelInfo PackGrow 0
@@ -193,8 +206,8 @@ recuresivelyWrite hdl fileToWrite = do
       appendFile fileToWrite output
     recuresivelyWrite hdl fileToWrite 
 
-createLoginWindow :: Handle -> Window -> String -> String -> Bool -> IO (Window)
-createLoginWindow  hdl startWindow username info checkRem = do
+createLoginWindow :: Handle -> [Int] -> Window -> String -> String -> Bool -> IO (Window)
+createLoginWindow  hdl key startWindow username info checkRem = do
   (window, vbAll)<- getFormatedWindow hdl
   window `on` mapEvent $ do 
     (x,y) <- liftIO $ windowGetDefaultSize window
@@ -209,9 +222,10 @@ createLoginWindow  hdl startWindow username info checkRem = do
     hPutStrLn hdl "logout"
     widgetHideAll window
     widgetShowAll startWindow
+  when (not checkRem) $ do set btnRem [ widgetVisible := False ]
   btnGetFullHistory <- buttonNewWithLabel "History"
   btnGetFullHistory `on` buttonActivated $ do
-    hPutStrLn hdl $ "getFullHistory " ++ username
+    hPutStrLn hdl $ encrypt key $ "getFullHistory " ++ username
     doesDE <- doesDirectoryExist "history"
     when (not doesDE) $ do createDirectory "history"
     (y, m, d) <- date
@@ -224,9 +238,9 @@ createLoginWindow  hdl startWindow username info checkRem = do
   hUpperBox <- hBoxNew False 5
   btnRefresh <- buttonNewWithLabel "Refresh"
   btnRefresh `on` buttonActivated $ do
-    hPutStrLn hdl $ "info " ++ username
-    updatedInfo <- hGetLine hdl
-    redrawnWindow <- createLoginWindow hdl startWindow username updatedInfo checkRem
+    hPutStrLn hdl $ encrypt key $ "info " ++ username
+    updatedInfo <- (decrypt key) <$> hGetLine hdl
+    redrawnWindow <- createLoginWindow hdl key startWindow username updatedInfo checkRem
     widgetHideAll window
     widgetShowAll redrawnWindow
     widgetDestroy window
@@ -253,14 +267,14 @@ createLoginWindow  hdl startWindow username info checkRem = do
         widgetShow dialogW
       Just x -> do
         putStrLn $ "combobox = " ++ show x
-        hPutStrLn hdl $ "createWallet " ++ username ++ " " ++ (tail $ init (show x))
-        info <- hGetLine hdl
+        hPutStrLn hdl $ encrypt key $ "createWallet " ++ username ++ " " ++ (tail $ init (show x))
+        info <- (decrypt key) <$> hGetLine hdl
         when (info /= "failure") $ do
           putStrLn "added"
-          btnToAdd <- createButtonFromWallet vbWallets hdl startWindow window username checkRem ("0|" ++ (tail $ init (show x)))
-          boxPackStart vbWallets btnToAdd PackGrow 0
+          btnToAdd <- createButtonFromWallet vbWallets hdl key startWindow window username checkRem ("0|" ++ (tail $ init (show x)))
+          -- boxPackStart vbWallets btnToAdd PackGrow 0
           widgetShow btnToAdd
-  when (info /= "NotFound") $ do void $ sequence $ map (createButtonFromWallet vbWallets hdl startWindow window username checkRem) (words info)
+  when (info /= "NotFound") $ do void $ sequence $ map (createButtonFromWallet vbWallets hdl key startWindow window username checkRem) (words info)
   
   widgetShowAll vbWallets
   boxPackStart vbAddWallet wallType PackGrow 0
@@ -269,15 +283,17 @@ createLoginWindow  hdl startWindow username info checkRem = do
   return window
   
   where
-    createButtonFromWallet :: VBox -> Handle -> Window -> Window -> String -> Bool -> String -> IO (Button)
-    createButtonFromWallet vbox hdl startWindow prevWindow username checkRem info  = do
+    createButtonFromWallet :: VBox -> Handle -> [Int] -> Window -> Window -> String -> Bool -> String -> IO (Button)
+    createButtonFromWallet vbox hdl key startWindow prevWindow username checkRem info  = do
       btn <- buttonNewWithLabel info
       let (amount, wallType) = (strSplit "|" info)
       boxPackStart vbox btn PackGrow 0
       btn `on` buttonActivated $ do
-        if ((read amount) /= 0) 
-          then do  
-            window <- createButtonWindow hdl startWindow prevWindow username info checkRem
+        if ((read amount :: Double) /= 0) 
+          then do 
+            putStrLn $ "amount parse " ++ show amount
+            window <- createButtonWindow hdl key startWindow prevWindow username info checkRem
+            putStrLn "window created"
             widgetHideAll prevWindow
             widgetShowAll window
           else do
@@ -285,8 +301,8 @@ createLoginWindow  hdl startWindow username info checkRem = do
             widgetShow dialogW
       return btn
 
-createRegisterWindow :: Handle -> Window -> IO (Window)
-createRegisterWindow hdl startWindow = do
+createRegisterWindow :: Handle -> [Int] -> Window -> IO (Window)
+createRegisterWindow hdl key startWindow = do
   (window, vbAll) <- getFormatedWindow hdl
   btnBack <- buttonNewWithLabel "Back"
   btnBack `on` buttonActivated $ do
@@ -344,7 +360,7 @@ createRegisterWindow hdl startWindow = do
       else 
         if(confirmed && check && pswEqual)
           then do
-            hPutStrLn hdl $! "register " ++ (foldl (\x y -> x ++ " " ++ y) "" array)
+            hPutStrLn hdl $ encrypt key $ "register " ++ (foldl (\x y -> x ++ " " ++ y) "" array)
             widgetShowAll startWindow
             widgetHideAll window
           else do
@@ -356,19 +372,19 @@ createRegisterWindow hdl startWindow = do
 
   return window 
 
-createStartWindow :: Handle -> IO (Window)
-createStartWindow hdl = do 
+createStartWindow :: Handle -> [Int] -> IO (Window)
+createStartWindow hdl key = do 
   (window, vbAll) <- getFormatedWindow hdl
   window `on` mapEvent $ do 
-    liftIO $ hPutStrLn hdl "autologin"
+    liftIO $ hPutStrLn hdl $ encrypt key "autologin"
     liftIO $ putStrLn "startedWork"
-    result <- liftIO $ hGetLine hdl
+    result <- liftIO $ (decrypt key) <$> hGetLine hdl
     liftIO $ putStrLn result
     liftIO $ when(result /= "failure") $ do
       -- nameAndInfo <- hGetLine hdl
       let (info, name) = strSplit " " result
       putStrLn $ "name = " ++ name ++ " info = " ++ info
-      nextWindow <- createLoginWindow hdl window name info True
+      nextWindow <- createLoginWindow hdl key window name info True
       widgetHideAll window
       widgetShowAll nextWindow
     return True
@@ -399,14 +415,14 @@ createStartWindow hdl = do
   -- set btnLogin [ widgetWidthRequest := 80]
   btnLogin `on` buttonActivated $ do
     array <- sequence $ map (entryGetText) [entName, entPsw]
-    hPutStrLn hdl $ "login " ++ (foldl (\x y -> x ++ " " ++ y) "" array)
-    info <- hGetLine hdl 
+    hPutStrLn hdl $ encrypt key $ "login " ++ (foldl (\x y -> x ++ " " ++ y) "" array)
+    info <- (decrypt key) <$> hGetLine hdl 
     when (info /= "failure") $ do
       checkRem <- toggleButtonGetActive rem
       when (checkRem == True) $ do
         username <- entryGetText entName
-        hPutStrLn hdl $ "savelogin " ++ username
-      loginWindow <- createLoginWindow hdl window (head array) info checkRem
+        hPutStrLn hdl $ encrypt key $ "savelogin " ++ username
+      loginWindow <- createLoginWindow hdl key window (head array) info checkRem
       widgetHideAll window
       widgetShowAll loginWindow
 
@@ -415,24 +431,76 @@ createStartWindow hdl = do
   -- set btnRegister [ widgetWidthRequest := 80]
   btnRegister `on` buttonActivated $ do
     widgetHideAll window
-    registerWindow <- createRegisterWindow hdl window
+    registerWindow <- createRegisterWindow hdl key window
     widgetShowAll registerWindow
   
   boxPackStart vbAll btnRegister PackNatural 5
   return $ window
 
+data IndexExceptionOnInitialization = IndexExceptionOnInitialization Int Int deriving (Show)
+
+instance Exception IndexExceptionOnInitialization where
+
+initializeBlock :: [Int] -> [Int]
+initializeBlock key = shufle 0 0 start key
+  where
+    start = [0..255]
+    shufle :: Int -> Int -> [Int] -> [Int] -> [Int]
+    shufle _ 256 list _ = list 
+    shufle base i list key = shufle j (i + 1) (subList & element j .~ swap) key 
+      where
+        j = mod (base + (list -!!- i) + (key -!!- (mod i $ length key))) 256 
+        swap = list -!!- i
+        subList = (list & element i .~ (list -!!- j))
+
+encrypt :: [Int] -> String -> String
+encrypt key msg = Prelude.map chr $ xorEval 0 0 (initializeBlock key) msg
+  where
+    xorEval :: Int -> Int -> [Int] -> String -> [Int]
+    xorEval _ _ _ [] = [] 
+    xorEval i j sBlock (m:msg) = (xor (ord m :: Int) (finBlock -!!- t)) : (xorEval newI newJ finBlock msg)
+      where
+        newI = mod (i + 1) 256
+        newJ = mod (j + (sBlock -!!- i)) 256 
+        swap = sBlock -!!- i
+        subBlock = sBlock & element i .~ (sBlock -!!- j)
+        finBlock = subBlock & element j .~ swap
+        t = mod ((finBlock -!!- newI) + (finBlock -!!- newJ)) 256
+
+decrypt :: [Int] -> String -> String
+decrypt = encrypt
+
+(-!!-) :: [a] -> Int -> a
+(-!!-) list number = case list ^? element number of
+  Nothing -> throw (IndexExceptionOnInitialization number (length list))
+  Just x -> x
+
+bitPow :: Integer -> Integer -> Integer-> Integer
+bitPow _ 0 _ = 1
+bitPow n power byMod = if(power .&. 1 == 1)
+  then
+    ((n *) $! (bitPow n (power - 1) byMod)) `mod` byMod
+  else
+    let b = bitPow n (shift power $ -1) byMod in
+      (b * b) `mod` byMod
+
 runDiffieHellman :: Handle -> Int -> IO ([Int])
 runDiffieHellman hdl k = do
   putStrLn "in runDiffieHellman"
-  a <- randomRIO (92233720368547758, 9223372036854775807) :: IO (Int)
+  a <- randomRIO (92233720368547758, 9223372036854775807) :: IO (Integer)
   putStrLn $ show a
-  let aSend = mod ((3681993451487) ^ a) 8429605667295912267 :: Int
+  let aSend = fromIntegral (bitPow 3681993451487 a 8429605667295912267) :: Int -- convert
+  let aInteger = (bitPow 3681993451487 a 8429605667295912267)
+  putStrLn $ "tosend not converted = " ++ (show aInteger) 
   putStrLn $ show aSend
   hPutStrLn hdl $ show aSend
   b <- hGetLine hdl
   putStrLn $ "aSend = " ++ (show aSend) ++ " b Receieved = " ++ b 
-  let key = mod ((read b :: Int) ^ a) 8429605667295912267 :: Int
+  let key = fromIntegral (bitPow (read b :: Integer) a 8429605667295912267) :: Int  -- convert
+  let keyInteger = (bitPow (read b :: Integer) a 8429605667295912267)
+  putStrLn $ "from other = " ++ b
   putStrLn $ "key = " ++ (show key)
+  putStrLn $ "key not converted = " ++ (show key)
   let roundOne = take k $ separateToBit key
   putStrLn $ show roundOne
   if(length roundOne < k)
@@ -444,12 +512,7 @@ runDiffieHellman hdl k = do
   where
     separateToBit :: Int -> [Int]
     separateToBit 0 = []
-    separateToBit num = (mod num (256::Int)) : (separateToBit (num `div` (256::Int)))
-
--- a 922337203685
--- b 912312543512
--- asend 5954308256915284831
--- bsend 2944596025013474380
+    separateToBit num = (mod num 256) : (separateToBit (num `div` (256::Int)))
 
 main :: IO ()
 main = do
@@ -475,7 +538,7 @@ main = do
   
   void initGUI
 
-  window <- createStartWindow hdl
+  window <- createStartWindow hdl key
   widgetShowAll window
 
   mainGUI

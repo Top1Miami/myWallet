@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS wallets (
   publicId TEXT,
   keeperName TEXT,
   walletType TEXT,
-  amountM INTEGER,
+  amountM DOUBLE,
   FOREIGN KEY (keeperName) REFERENCES users(username)
 );
 CREATE TABLE IF NOT EXISTS logins (
