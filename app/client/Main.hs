@@ -71,7 +71,7 @@ createTransferWindow hdl key startWindow prevWindow loginWindow username info ch
 
   hbox <- getUpperButtons startWindow prevWindow window hdl checkRem
   boxPackStart vbAll hbox PackNatural 0
-  labelName <- labelNewWithMnemonic "username"
+  labelName <- labelNewWithMnemonic "publicId"
   entName <- entryNew
   set entName [ entryText := "" ]
   labelAmount <- labelNewWithMnemonic "amount of money to transfer"
@@ -479,88 +479,6 @@ createStartWindow hdl key = do
   boxPackStart vbAll btnRegister PackNatural 5
   return $ window
 
-encryptWrap :: [Int] -> String -> String
-encryptWrap key msg = encrypt key msg
-
-decryptWrap :: [Int] -> String -> String
-decryptWrap = encryptWrap
-
-initializeBlock :: [Int] -> [Int]
-initializeBlock key = shufle 0 0 start key
-  where
-    start = [0..255]
-    shufle :: Int -> Int -> [Int] -> [Int] -> [Int]
-    shufle _ 256 list _ = list 
-    shufle base i list key = shufle j (i + 1) (subList & element j .~ swap) key 
-      where
-        j = mod (base + (list -!!- i) + (key -!!- (mod i $ length key))) 256 
-        swap = list -!!- i
-        subList = (list & element i .~ (list -!!- j))
-
-encrypt :: [Int] -> String -> String
-encrypt key msg = Prelude.map chr $ xorEval 0 0 (initializeBlock key) msg
-  where
-    xorEval :: Int -> Int -> [Int] -> String -> [Int]
-    xorEval _ _ _ [] = [] 
-    xorEval i j sBlock (m:msg) = (xor (ord m :: Int) (finBlock -!!- t)) : (xorEval newI newJ finBlock msg)
-      where
-        newI = mod (i + 1) 256
-        newJ = mod (j + (sBlock -!!- i)) 256 
-        swap = sBlock -!!- i
-        subBlock = sBlock & element i .~ (sBlock -!!- j)
-        finBlock = subBlock & element j .~ swap
-        t = mod ((finBlock -!!- newI) + (finBlock -!!- newJ)) 256
-
-decrypt :: [Int] -> String -> String
-decrypt = encrypt
-
-data IndexExceptionOnInitialization = IndexExceptionOnInitialization Int Int deriving (Show)
-
-instance Exception IndexExceptionOnInitialization where
-
-(-!!-) :: [a] -> Int -> a
-(-!!-) list number = case list ^? element number of
-  Nothing -> throw (IndexExceptionOnInitialization number (length list))
-  Just x -> x
-
-bitPow :: Integer -> Integer -> Integer-> Integer
-bitPow _ 0 _ = 1
-bitPow n power byMod = if(power .&. 1 == 1)
-  then
-    ((n *) $! (bitPow n (power - 1) byMod)) `mod` byMod
-  else
-    let b = bitPow n (shift power $ -1) byMod in
-      (b * b) `mod` byMod
-
-runDiffieHellman :: Handle -> Int -> IO ([Int])
-runDiffieHellman hdl k = do
-  putStrLn "in runDiffieHellman"
-  a <- randomRIO (92233720368547758, 9223372036854775807) :: IO (Integer)
-  putStrLn $ show a
-  let aSend = fromIntegral (bitPow 3681993451487 a 8429605667295912267) :: Int -- convert
-  let aInteger = (bitPow 3681993451487 a 8429605667295912267)
-  putStrLn $ "tosend not converted = " ++ (show aInteger) 
-  putStrLn $ show aSend
-  hPutStrLn hdl $ show aSend
-  b <- hGetLine hdl
-  putStrLn $ "aSend = " ++ (show aSend) ++ " b Receieved = " ++ b 
-  let key = fromIntegral (bitPow (read b :: Integer) a 8429605667295912267) :: Int  -- convert
-  let keyInteger = (bitPow (read b :: Integer) a 8429605667295912267)
-  putStrLn $ "from other = " ++ b
-  putStrLn $ "key = " ++ (show key)
-  putStrLn $ "key not converted = " ++ (show key)
-  let roundOne = take k $ separateToBit key
-  putStrLn $ show roundOne
-  if(length roundOne < k)
-    then do
-      keyAdd <- runDiffieHellman hdl (k - (length roundOne))
-      return $ roundOne ++ keyAdd
-    else
-      return roundOne
-  where
-    separateToBit :: Int -> [Int]
-    separateToBit 0 = []
-    separateToBit num = (mod num 256) : (separateToBit (num `div` (256::Int)))
 
 hPutStrLnWrap :: Handle -> String -> IO ()
 hPutStrLnWrap hdl inp = do
