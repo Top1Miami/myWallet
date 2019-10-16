@@ -106,8 +106,11 @@ verifyUser username pwd needPsw= do
     Nothing -> return Nothing
     Just user -> if ((password user) == pwd || needPsw)  
       then fmap Just $ (getAllWallets user) >>= 
-        (maybe (return "NotFound") (\list -> return $ foldl (\conc arg -> conc ++ (show arg) ++ " ") "" list))
+        (maybe (return []) (\list -> return $ checkIfEmpty $ foldl (\x y -> x ++ ";" ++ show y) "" list))
       else return $ Nothing
+  where
+    checkIfEmpty [] = []
+    checkIfEmpty x = tail x
 
 addWallet :: String -> String -> Int -> IO (Maybe String)
 addWallet username walletType amountM = do
@@ -223,7 +226,7 @@ exchange typeFrom typeTo money = (fromStringMy typeFrom / fromStringMy typeTo) *
 onSuccess :: Connection -> Wallet -> Wallet -> Double -> IO (Maybe String)
 onSuccess conn walletFrom walletTo money = do  
   execute conn "UPDATE wallets SET amountM = ? WHERE id = ?" (amountM walletFrom - money, walletId walletFrom) 
-  execute conn "UPDATE wallets SET amountM = ? WHERE id = ?" (exchange (walletType walletFrom) (walletType walletTo) $ amountM walletFrom + money, walletId walletTo)
+  execute conn "UPDATE wallets SET amountM = ? WHERE id = ?" (exchange (walletType walletFrom) (walletType walletTo) money + amountM walletTo, walletId walletTo)
   maybeFrom <- selectWalletById conn (walletId walletFrom)
   maybeTo <- selectWalletById conn (walletId walletTo)
   return $ getWalletInfo maybeFrom maybeTo    
@@ -311,20 +314,20 @@ getAllWalletsByName conn username = do
     Just x -> do
       foundAll <$> query conn "SELECT * FROM wallets WHERE keeperName = ?" (Only username) :: IO (Maybe [Wallet])
 
-historyFromWallets :: Connection -> [Wallet] -> IO (Maybe [String])  
+historyFromWallets :: Connection -> [Wallet] -> IO (Maybe String)  
 historyFromWallets conn listWallets = do
-  Just <$> ((++ [";"]) . concat) <$> (sequence $ map (\wallet -> do
+  Just <$> concat <$> (sequence $ map (\wallet -> do
     hF <- query conn "SELECT * FROM history WHERE walletFrom = ? OR walletTo = ? ORDER BY sqltime DESC" (walletId wallet, walletId wallet) :: IO [History]    
-    return $ ["<", (publicId wallet)] ++ (map (show) hF) ++ [">"]
+    return $ "<" ++ (publicId wallet) ++ (checkIfEmpty $ foldl (\x y -> x ++ "|" ++ (show y)) "" hF) ++ ">"
     ) listWallets)
+  where
+    checkIfEmpty [] = []
+    checkIfEmpty x = tail x
 
 historyByTime :: Connection -> Wallet -> IO (Maybe String)
 historyByTime conn wallet = do
   hF <- query conn "SELECT * FROM history WHERE walletFrom = ? OR walletTo = ? ORDER BY sqltime DESC" (walletId wallet, walletId wallet) :: IO [History]    
-  -- let headListHistories = head hF
-  -- let tailListHistories = tail hF
   let foldStrH listHistories = foldl (\f s -> f ++ "|" ++ (show s)) "" listHistories  
-  putStrLn $ foldStrH hF
   return $ Just $ "<" ++ (foldStrH hF) ++ ">"
 
 getFixedHistory :: String -> String -> IO (Maybe String)
@@ -336,7 +339,7 @@ getFixedHistory username walletId = do
     Just wallet ->
       historyByTime conn wallet) <* (close conn)
 
-getUserHistory :: String -> IO (Maybe [String])
+getUserHistory :: String -> IO (Maybe String)
 getUserHistory username = do
   conn <- open "tools.db"
   wallets <- getAllWalletsByName conn username
